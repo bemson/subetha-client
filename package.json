@@ -1,0 +1,27 @@
+{
+  "name": "subetha-client",
+  "version": "0.0.0-alpha",
+  "description": "SubEtha Client API",
+  "main": "src/subetha-client.js",
+  "dependencies": {
+    "morus": "1.x"
+  },
+  "keywords": [
+    "network",
+    "client",
+    "peerless",
+    "messaging",
+    "events",
+    "pubsub"
+  ],
+  "author": {
+    "name": "Bemi Faison",
+    "email": "bemson@gmail.com",
+    "url": "https://github.com/bemson"
+  },
+  "repository": {
+    "type": "git",
+    "url": "http://github.com/bemson/subetha-client.git"
+  },
+  "licenses": ["Apache-2.0"]
+}
