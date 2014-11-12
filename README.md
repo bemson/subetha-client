@@ -176,24 +176,22 @@ eventer.fire(event [, args, ... ]);
 Subscribe a callback to an event.
 
 ```
-eventer.on(event, callback [, scope]);
+eventer.on(event, callback);
 ```
 
    * **event**: _(string)_ An arbitrary event name.
    * **callback**: _(function)_ A callback to invoke when the event is fires.
-   * **scope**: _(object)_ An object to scope the callback invocation. By default, this is the EventEmitter instance.
 
 #### EventEmittter#off()
 
 Unsubscribe callback(s) from an event. When invoked with no arguments, all subscriptions are removed.
 
 ```
-eventer.off([event [, callback [, scope]]]);
+eventer.off([event [, callback]]);
 ```
 
    * **event**: _(string)_ The event to unsubscribe. When omitted, all event subscribers are removed.
    * **callback**: _(function)_ The callback to detach from this event. When omitted, all callbacks are detached from this event.
-   * **scope**: _(object)_ Specifies detaching the given callback that is _also_ scoped to the given object. Do not use, unless you attached a callback with a particular scope.
 
 ### Subetha::Peer
 

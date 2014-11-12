@@ -770,7 +770,7 @@
     function EventEmitter() {}
 
     mix(EventEmitter.prototype, {
-      on: function (evt, callback, scope) {
+      on: function (evt, callback) {
         var me = this;
 
         if (
@@ -778,59 +778,45 @@
           typeof callback === 'function'
         ) {
           if (!protoHas.call(me, '_evts')) {
+            // init events hash
             me._evts = {};
           }
           if (!protoHas.call(me._evts, evt)) {
+            // init event queue
             me._evts[evt] = [];
           }
-          me._evts[evt].push({
-            cb: callback,
-            ctx: scope || me,
-            fctx: arguments.length > 2
-          });
+          // add callback to event queue
+          me._evts[evt].push(callback);
         }
         return me;
       },
-      off: function (evt, callback, scope) {
+      off: function (evt, callback) {
         var
           me = this,
-          subs,
-          keep,
-          sub,
-          subsIdx = 0,
-          noscope = arguments.length < 3,
-          remove;
+          cbs,
+          cbLn,
+          argLn = arguments.length;
 
-        if (!protoHas.call(me, '_evts') || !arguments.length) {
+        if (!protoHas.call(me, '_evts') || !argLn) {
+          // reset if clearing all events
           me._evts = {};
         } else if (
           isFullString(evt) &&
           protoHas.call(me._evts, evt)
         ) {
-          if (callback) {
-            subs = me._evts[evt];
-            keep = me._evts[evt] = [];
-            // determine which binds to keep
-            for (; sub = subs[subsIdx]; ++subsIdx) {
-              if (
-                // callbacks do not match
-                sub.cb !== callback ||
-                // no scope but one is specified
-                (noscope && sub.fctx) ||
-                // scopes do not match
-                sub.ctx !== scope
-              ) {
-                // keep this bind
-                keep.push(sub);
+          cbs = me._evts[evt];
+          if (typeof callback == 'function') {
+            cbLn = cbs.length;
+            // remove the last matching callback only
+            while (cbLn--) {
+              if (cbs[cbLn] === callback) {
+                cbs.splice(cbLn, 1);
+                break;
               }
             }
-            if (!keep.length) {
-              remove = 1;
-            }
-          } else {
-            remove = 1;
           }
-          if (remove) {
+          // remove event queue if no callback or none left
+          if (argLn < 2 || !cbs.length) {
             delete me._evts[evt];
           }
         }
@@ -841,30 +827,30 @@
         var
           me = this,
           params,
-          subs,
-          subsLn,
-          subsIdx,
-          invokeCallback;
+          cbs,
+          cbLn,
+          cbIdx,
+          callbackInvoker;
 
         if (
           isFullString(evt) &&
           protoHas.call(me, '_evts') &&
           protoHas.call(me._evts, evt) &&
-          (subs = me._evts[evt]).length
+          (cbs = me._evts[evt]).length
         ) {
           params = protoSlice.call(arguments, 1);
           if (params.length) {
-            invokeCallback = function (sub) {
-              sub.cb.apply(sub.ctx, params);
+            callbackInvoker = function (cb) {
+              cb.apply(me, params);
             };
           } else {
-            invokeCallback = function (sub) {
-              sub.cb.call(sub.ctx);
+            callbackInvoker = function (cb) {
+              cb.call(me);
             };
           }
-          subsLn = subs.length;
-          for (subsIdx = 0; subsIdx < subsLn; ++subsIdx) {
-            invokeCallback(subs[subsIdx]);
+          cbLn = cb.length;
+          for (cbIdx = 0; cbIdx < cbLn; cbIdx++) {
+            callbackInvoker(cb[cbIdx]);
           }
         }
 
