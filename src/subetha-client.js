@@ -235,7 +235,8 @@
           // announce each peer if we have them and we're still ready
           if (hasPeers && client.state === STATE_READY) {
             for (peerId in clientPeers) {
-              client.fire(JOIN_EVENT, clientPeers[peerId]);
+              // pass additional flag to note this peer existed
+              client.fire(JOIN_EVENT, clientPeers[peerId], true);
             }
           }
         },
@@ -281,7 +282,9 @@
             peer,
             ln,
             changeSets,
-            csLn;
+            csLn,
+            peeredClients,
+            pcLn;
 
 
           // handle joins
@@ -293,20 +296,27 @@
 
             // get clients in this channel
             channelClients = bridge.channels[peerData.channel];
+            // reset list of clients that gained peers
+            peeredClients = [];
 
-            // add a unique peer instance to each client in this channel
+            // add a unique peer instance to clients that don't have one
             for (clientId in channelClients) {
-              if (clientId != peerId) {
-                addPeerToClient(channelClients[clientId], peerData);
+              if (
+                clientId != peerId &&
+                protoHas.call(channelClients, clientId) &&
+                !protoHas.call((client = channelClients[clientId]).peers, peerId)
+              ) {
+                addPeerToClient(client, peerData);
+                // track that this client should be notified
+                peeredClients.push(client);
               }
             }
 
-            // fire connect event on each client
-            for (clientId in channelClients) {
-              if (clientId != peerId) {
-                client = channelClients[clientId];
-                client.fire(JOIN_EVENT, client.peers[peerId]);
-              }
+            // only notify clients that gained this peer
+            pcLn = peeredClients.length;
+            while (pcLn--) {
+              client = peeredClients[pcLn];
+              client.fire(JOIN_EVENT, client.peers[peerId]);
             }
           }
 
@@ -333,7 +343,7 @@
               }
             }
 
-            // fire connect event on each client, passing the removed peer
+            // fire drop event on each client, passing the removed peer
             csLn = changeSets.length;
             while (csLn--) {
               client = changeSets[csLn][0];

@@ -104,7 +104,7 @@ person.on('::drop', function (peer) {
 });
 ```
 
-**Note:** Dropped peers are removed from the `Client@peers` property.
+**Note:** A _::join_ event is also fired per existing peer, once a client connects. These events pass an additional truthy flag, indicating that the peer was present before the client connected.
 
 #### Connecting to protected bridges
 
