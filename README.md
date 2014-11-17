@@ -128,7 +128,7 @@ automatic.open('do it@forme', 'user', 'access-token');
 
 console.log('channel: "%s"', automatic.channel); // channel: "do it"
 console.log('url: "%s"', automatic.url); // url: "forme"
-console.log('credentials: %s', automatic.credentials); // credentials: "user", "access-token"
+console.log('credentials: "%s"', automatic.credentials.join('", "')); // credentials: "user", "access-token"
 ```
 
 **Note:** This example assumes the "forme" bridge alias was already defined.
