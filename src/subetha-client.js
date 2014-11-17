@@ -705,8 +705,7 @@
     function checkAndSendCustomEvent(clients, clientId, peerId, handler, data, msg, payload, evt) {
       var
         peer,
-        client,
-        customEvent;
+        client;
 
       // this logic prevents a client from messaging itself
       if (
@@ -716,13 +715,12 @@
         protoHas.call((client = clients[clientId]).peers, peerId)
       ) {
         peer = client.peers[peerId];
-        customEvent = {
+        handler(client, peer, data, {
           id: payload.mid,
           peer: peer,
           sent: new Date(payload.sent),
           timeStamp: evt.timeStamp
-        };
-        handler(client, peer, customEvent, payload);
+        });
       }
     }
 
