@@ -151,7 +151,9 @@
 
           // authorize queued clients
           for (clientId in clients) {
-            bridge.auth(clients[clientId]);
+            if (protoHas.call(clients, clientId)) {
+              bridge.auth(clients[clientId]);
+            }
           }
         },
 
@@ -215,8 +217,10 @@
           clientPeers = client.peers = {};
           // add pre-existing peers
           for (peerId in networkPeers) {
-            hasPeers = 1;
-            addPeerToClient(client, networkPeers[peerId]);
+            if (protoHas.call(networkPeers, peerId)) {
+              hasPeers = 1;
+              addPeerToClient(client, networkPeers[peerId]);
+            }
           }
 
           // add to channel index
@@ -235,8 +239,10 @@
           // announce each peer if we have them and we're still ready
           if (hasPeers && client.state === STATE_READY) {
             for (peerId in clientPeers) {
-              // pass additional flag to note this peer existed
-              client.fire(JOIN_EVENT, clientPeers[peerId], true);
+              if (protoHas.call(clientPeers, peerId)) {
+                // pass additional flag to note this peer existed
+                client.fire(JOIN_EVENT, clientPeers[peerId], true);
+              }
             }
           }
         },
@@ -333,7 +339,10 @@
 
             // remove peer from each client in this channel
             for (clientId in channelClients) {
-              if (clientId != peerId) {
+              if (
+                clientId != peerId &&
+                protoHas.call(channelClients, clientId)
+              ) {
                 client = channelClients[clientId];
                 peer = client.peers[peerId];
                 changeSets.push([client, peer]);
@@ -428,16 +437,18 @@
           } else {
             // invoke handler with all
             for (clientId in clients) {
-              checkAndSendCustomEvent(
-                clients,
-                clientId,
-                peerId,
-                handler,
-                msgData,
-                msg,
-                payload,
-                evt
-              );
+              if (protoHas.call(clients, clientId)) {
+                checkAndSendCustomEvent(
+                  clients,
+                  clientId,
+                  peerId,
+                  handler,
+                  msgData,
+                  msg,
+                  payload,
+                  evt
+                );
+              }
             }
           }
         }
@@ -708,7 +719,9 @@
       // dereference global queue then add all pending clients
       clientQueue = 0;
       for (clientId in clients) {
-        addClient(clients[clientId]);
+        if (protoHas.call(clients, clientId)) {
+          addClient(clients[clientId]);
+        }
       }
     }
 
@@ -1028,7 +1041,9 @@
         bridge.clients = {};
         bridge.cnt = 0;
         for (clientId in clients) {
-          bridge.drop(clients[clientId]);
+          if (protoHas.call(clients, clientId)) {
+            bridge.drop(clients[clientId]);
+          }
         }
 
         // exit if new clients were created
