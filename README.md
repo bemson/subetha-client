@@ -2,7 +2,6 @@
 
 Define, send and receive SubEtha message types
 
-version 0.0.0-alpha
 by Bemi Faison
 
 
