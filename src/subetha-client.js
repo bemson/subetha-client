@@ -834,7 +834,7 @@
           isFullString(evt) &&
           protoHas.call(me, '_evts') &&
           protoHas.call(me._evts, evt) &&
-          (cbs = me._evts[evt]).length
+          (cbLn = (cbs = me._evts[evt]).length)
         ) {
           params = protoSlice.call(arguments, 1);
           if (params.length) {
@@ -846,9 +846,8 @@
               cb.call(me);
             };
           }
-          cbLn = cb.length;
           for (cbIdx = 0; cbIdx < cbLn; cbIdx++) {
-            callbackInvoker(cb[cbIdx]);
+            callbackInvoker(cbs[cbIdx]);
           }
         }
 
