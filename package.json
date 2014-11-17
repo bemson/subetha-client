@@ -1,7 +1,7 @@
 {
   "name": "subetha-client",
   "version": "0.0.0-alpha",
-  "description": "SubEtha Client API",
+  "description": "Define, send and receive SubEtha message types",
   "main": "src/subetha-client.js",
   "dependencies": {
     "morus": "1.x"
