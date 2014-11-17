@@ -437,8 +437,8 @@
       // public API
       subetha = {
 
-        // number of seconds to wait for the bridge to connect
-        bridgeTimeout: 8000,
+        // number of milliseconds to wait for the bridge to connect
+        bridgeTimeout: 10000,
 
         // expose guid function
         guid: guid,
