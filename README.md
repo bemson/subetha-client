@@ -283,6 +283,7 @@ Client instances fire the following network events, prefixed by a double-colon (
     * `peer`: _(Peer)_ References the recently removed `Subetha.Peer` instance.
   * **::join** - Triggered when a peer joins the channel.
     * `peer`: _(Peer)_ References the newly added `Subetha.Peer` instance.
+    * `exists` _(Boolean)_ This is `true` for peers present during the "::connect" event.
   * **::readyStateChange** - Triggered when `@state` changes. This event precedes _::auth-fail_, _::connect_ and _::disconnect_ events.
     * `newState`: _(number)_ The integer of the new state.
     * `oldState`: _(number)_ The integer of the old state.
