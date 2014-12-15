@@ -884,6 +884,8 @@
         iframe = doc.createElement('iframe'),
         cipher = new Morus();
 
+      iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+
       bridge.iframe = iframe;
       bridge.id = network;
       bridge.cipher = cipher;
