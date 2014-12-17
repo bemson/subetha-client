@@ -1275,6 +1275,8 @@
           }
           // close existing connection
           me.close();
+          // capture new (closed) state
+          state = me.state;
         }
 
         // set resolved network
