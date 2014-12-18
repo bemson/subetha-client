@@ -23,5 +23,5 @@
     "type": "git",
     "url": "http://github.com/bemson/subetha-client.git"
   },
-  "licenses": ["Apache-2.0"]
+  "license": "Apache-2.0"
 }
