@@ -159,12 +159,12 @@ Subetha.Peer.prototype.hugOne = function () {
 };
 
 // add a hug message handler
-Subetha.msgType.hug = function (toClient, fromPeer, payload) {
+Subetha.msgType.hug = function (receiver, sender, payload) {
   console.log(
     '%s received a %s hug from %s!',
-    toClient.id,
+    receiver.id,
     payload,
-    fromPeer.id
+    sender.id
   );
 };
 ```
@@ -224,20 +224,20 @@ In this way, message types are a kind of namespace which you must choose careful
 
 The Client module invokes message handlers with the following signature.
 
-  1. _toClient_ - The Client instance receiving the message.
-  2. _fromPeer_ - The Peer instance that sent the message. This instance comes from the receiving Client's own `peers` collection.
+  1. _receiver_ - The Client instance receiving the message.
+  2. _sender_ - The Peer instance that sent the message. This instance comes from the receiving Client's own `peers` collection.
   3. _payload_ - The arbitrary value sent from the peer, via the `#transmit()` method.
   4. _details_ - Message meta-data, such as routing and metrics.
     * `id` - The message id.
     * `sent` - The date the message was sent (as a `Date` instance).
     * `timeStamp` - The date the message was received (in milliseconds).
-    * `peers` - An array of all recipient ids. (This is empty for broadcasts.)
+    * `peers` - An array of all receiver ids. (This is empty for broadcasts.)
 
 Below demonstrates a message handler that validates the message content and meta-data, before triggering events in the client.
 
 ```js
-Subetha.msgType.paint = function (toClient, fromPeer, payload, details) {
-  var oldHue = toClient.hue;
+Subetha.msgType.paint = function (receiver, sender, payload, details) {
+  var oldHue = receiver.hue;
   if (
     // ensure the payload is a hex-RGB string
     /^[a-f0-9]{6}$/i.test(payload) &&
@@ -246,10 +246,10 @@ Subetha.msgType.paint = function (toClient, fromPeer, payload, details) {
     // the message didn't take too long to arrive
     details.timeStamp - details.sent < 100 &&
     // the sender was from a specific origin
-    /\bexample.com\b/.test(fromPeer.origin)
+    /\bexample.com\b/.test(sender.origin)
   ) {
-    toClient.hue = payload;
-    toClient.fire('hueChange', payload, oldHue);
+    receiver.hue = payload;
+    receiver.fire('hueChange', payload, oldHue);
   }
 };
 ```
@@ -318,7 +318,7 @@ client._transmit(type [, peers [, payload]]);
 ```
 
    * **type**: _(string)_ The message type.
-   * **peers**: _(string[]|peer[])_ One or an array of recipient peer ids and/or instances. When omitted or falsy, the message is broadcast to all channel peers.
+   * **peers**: _(string[]|peer[])_ One or an array of receiving peer ids and/or instances. When omitted or falsy, the message is broadcast to all channel peers.
    * **payload**: _(mix)_ An arbitrary value passed to a message type handler.
 
 **Note:** Peers must have a message handler that matches the type sent, in order for them to both receive and process your message.
@@ -445,14 +445,14 @@ Hash of message handling functions, keyed by the message type they handle. (For 
 
 Below is the call signature passed to message handlers.
 
-  1. _toClient_ - The Client instance receiving the message.
-  2. _fromPeer_ - The Peer instance that sent the message.
+  1. _receiver_ - The Client instance receiving the message.
+  2. _sender_ - The Peer instance that sent the message.
   3. _payload_ - A custom, arbitrary value sent from the peer.
   4. _details_ - Message meta-data.
     * `id` - The message id.
     * `sent` - The date the message was sent (as a `Date` instance).
     * `timeStamp` - The date the message was received (in milliseconds).
-    * `peers` - An array of recipient ids. (This is empty for broadcasts.)
+    * `peers` - An array of receiver ids. (This is empty for broadcasts.)
 
 ### Subetha::protocol
 
