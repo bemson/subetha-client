@@ -85,9 +85,7 @@
               yes = 0;
             }
           }, '*');
-        } catch (e) {
-          yes = 0;
-        }
+        } catch (e) {}
 
         return yes;
       }(),
