@@ -74,7 +74,7 @@
         delete clientQueue[client.id];
         setClientState(client, STATE_INITIAL);
       },
-      canPostObjects = !!function () {
+      canPostObjects = /trident/i.test(navigator.userAgent) ? 0 : !!function () {
         var yes = 1;
 
         // synchronous check for postMessage object support!
