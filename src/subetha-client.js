@@ -1081,7 +1081,11 @@
 
       // remove client from bridge
       drop: function (client) {
-        var clientState = client.state;
+        var
+          peers = client.peers,
+          peerId,
+          clientState = client.state
+        ;
 
         // remove custom bridge method
         delete client._bridge;
@@ -1099,8 +1103,16 @@
           }
         }
 
-        // dereference all peers
+        // clear all peer references
         client.peers = {};
+
+        // inform client of removed peers
+        for (peerId in peers) {
+          if (protoHas.call(peers, peerId)) {
+            // inform client this peer has dropped
+            client.fire(DROP_EVENT, peers[peerId]);
+          }
+        }
 
         // if client is still closing
         if (client.state == STATE_CLOSING) {
