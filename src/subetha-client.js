@@ -6,23 +6,19 @@
  * Released under the Apache License
  */
 /* global define, require */
-!function (inAMD, inCJS, Array, Date, Math, JSON, Object, RegExp, scope, undefined) {
+!function (inAMD, inCJS, Array, Date, Math, Object, RegExp, scope, undefined) {
 
   function initSubEtha() {
 
     var
-      Morus = ((inCJS || inAMD) ? require('morus') : scope.Morus),
-      JSONstringify = JSON.stringify,
-      JSONparse = JSON.parse,
       mathRandom = Math.random,
-      protoHas = Object.prototype.hasOwnProperty,
-      protoSlice = Array.prototype.slice,
+      hasOwnProperty = Function.prototype.call.bind(Object.prototype.hasOwnProperty),
+      arraySlice = Function.prototype.call.bind(Array.prototype.slice),
       doc = document,
       docBody,
       domReady = 0,
       rxp_guid = /[xy]/g,
       guidPattern = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx',
-      speakerKey = mathRandom(),
       STATE_INITIAL = 0,
       STATE_QUEUED = 1,
       STATE_PENDING = 2,
@@ -33,7 +29,8 @@
       CONNECT_EVENT = '::connect',
       DISCONNECT_EVENT = '::disconnect',
       CHANGE_EVENT = '::readyStateChange',
-      netEvts = {},
+      prohibitedEvents = {},
+      supported = typeof
       // tests whether a string looks like a domain
       /*
       should pass:
@@ -53,8 +50,6 @@
       in order to prefix with "//"
       */
       r_domainish = /^([\w\-]+\.)+[conmi]\w{1,2}\b/,
-      // extracts json with decoded data
-      r_extractJSON = /^[^{]{0,40}({.+})[^}]{0,40}$/,
       inFileProtocol = location.protocol.charAt(0) == 'f',
       // for domainish urls, use http when in "file:" protocol
       urlPrefix = inFileProtocol ? 'http://' : '//',
@@ -64,7 +59,6 @@
       // clients queued to open (before DOMReady)
       clientQueue = {},
       protocolVersion = 'se-0',
-      privateKey = {},
       // add to global queue (before DOMReady)
       addClient = function (client) {
         clientQueue[client.id] = client;
@@ -74,28 +68,6 @@
         delete clientQueue[client.id];
         setClientState(client, STATE_INITIAL);
       },
-      canPostObjects = /trident/i.test(navigator.userAgent) ? 0 : !!function () {
-        var yes = 1;
-
-        // synchronous check for postMessage object support!
-        // thx gregers@http://stackoverflow.com/a/20743286
-        try {
-          scope.postMessage({
-            toString: function () {
-              yes = 0;
-            }
-          }, '*');
-        } catch (e) {}
-
-        return yes;
-      }(),
-      postMessage = canPostObjects ?
-        function (win, msg) {
-          win.postMessage(msg, '*');
-        } :
-        function (win, msg) {
-          win.postMessage(JSONstringify(msg), '*');
-        },
       bind = scope.attachEvent ?
         function (object, eventName, callback) {
           object.attachEvent('on' + eventName, callback);
@@ -110,29 +82,24 @@
         function (object, eventName, callback) {
           object.removeEventListener(eventName, callback, false);
         },
-      isArray = typeof Array.isArray === 'function' ?
-        Array.isArray :
-        function (obj) {
-          return obj instanceof Array;
-        },
+      isArray = Array.isArray,
 
       /*
       handler signature
         1. bridge instance
-        2. msg (in payload)
-        3. payload (decoded from event)
-        4. native post-message event
+        2. data
+        3. message
       */
-      bridgeDataHandlers = {
+      messageHandlers = {
 
         // first message expected by bridge
         /*
-        payload structure
-        {                  [payload]
-          mid: <guid>,
+        ready message
+        {                     [message]
+          mid: <int>,
           type: "ready",
           sent: <date>,
-          msg: <uri>            [msg]
+          data: <uri>         [data]
         }
         */
         ready: function (bridge, origin) {
@@ -151,7 +118,7 @@
 
           // authorize queued clients
           for (clientId in clients) {
-            if (protoHas.call(clients, clientId)) {
+            if (hasOwnProperty(clients, clientId)) {
               bridge.auth(clients[clientId]);
             }
           }
@@ -191,7 +158,7 @@
             peerId,
             channelName;
 
-          if (!protoHas.call(clients, clientId)) {
+          if (!hasOwnProperty(clients, clientId)) {
             // avoid unknown clients
             return;
           }
@@ -217,7 +184,7 @@
           clientPeers = client.peers = {};
           // add pre-existing peers
           for (peerId in networkPeers) {
-            if (protoHas.call(networkPeers, peerId)) {
+            if (hasOwnProperty(networkPeers, peerId)) {
               hasPeers = 1;
               addPeerToClient(client, networkPeers[peerId]);
             }
@@ -225,7 +192,7 @@
 
           // add to channel index
           channelName = client.channel;
-          if (!protoHas.call(channels, channelName)) {
+          if (!hasOwnProperty(channels, channelName)) {
             channels[channelName] = {};
             bridge.channelCnts[channelName] = 0;
           }
@@ -239,7 +206,7 @@
           // announce each peer if we have them and we're still ready
           if (hasPeers && client.state === STATE_READY) {
             for (peerId in clientPeers) {
-              if (protoHas.call(clientPeers, peerId)) {
+              if (hasOwnProperty(clientPeers, peerId)) {
                 // pass additional flag to note this peer existed
                 client.fire(JOIN_EVENT, clientPeers[peerId], true);
               }
@@ -309,8 +276,8 @@
             for (clientId in channelClients) {
               if (
                 clientId != peerId &&
-                protoHas.call(channelClients, clientId) &&
-                !protoHas.call((client = channelClients[clientId]).peers, peerId)
+                hasOwnProperty(channelClients, clientId) &&
+                !hasOwnProperty((client = channelClients[clientId]).peers, peerId)
               ) {
                 addPeerToClient(client, peerData);
                 // track that this client should be notified
@@ -341,7 +308,7 @@
             for (clientId in channelClients) {
               if (
                 clientId != peerId &&
-                protoHas.call(channelClients, clientId)
+                hasOwnProperty(channelClients, clientId)
               ) {
                 client = channelClients[clientId];
                 peer = client.peers[peerId];
@@ -410,7 +377,7 @@
           // exit when there are no handlers or this type has no handler
           if (
             typeof handlers !== 'object' ||
-            !protoHas.call(handlers, msg.type)
+            !hasOwnProperty(handlers, msg.type)
           ) {
             return;
           }
@@ -437,7 +404,7 @@
           } else {
             // invoke handler with all
             for (clientId in clients) {
-              if (protoHas.call(clients, clientId)) {
+              if (hasOwnProperty(clients, clientId)) {
                 checkAndSendCustomEvent(
                   clients,
                   clientId,
@@ -505,12 +472,13 @@
       }
     ;
 
-    // collect netevts
-    netEvts[DROP_EVENT] = 1;
-    netEvts[JOIN_EVENT] = 1;
-    netEvts[CHANGE_EVENT] = 1;
-    netEvts[CONNECT_EVENT] = 1;
-    netEvts[DISCONNECT_EVENT] = 1;
+    // create prohibited events look up
+    prohibitedEvents[DROP_EVENT] =
+    prohibitedEvents[JOIN_EVENT] =
+    prohibitedEvents[CHANGE_EVENT] =
+    prohibitedEvents[CONNECT_EVENT] =
+    prohibitedEvents[DISCONNECT_EVENT] =
+      1;
 
     // build ethadiv
     ethaDiv.style.display = 'none';
@@ -519,6 +487,10 @@
     ethaDiv.setAttribute('data-owner', 'subetha');
 
     // UTILITY
+
+    function postMessage(win, msg) {
+      win.postMessage(msg, '*');
+    }
 
     // shallow object merge
     function mix(base) {
@@ -529,7 +501,7 @@
 
       for (; source = arguments[argIdx]; argIdx++) {
         for (member in source) {
-          if (protoHas.call(source, member)) {
+          if (hasOwnProperty(source, member)) {
             base[member] = source[member];
           }
         }
@@ -571,7 +543,7 @@
         if (id instanceof Subetha.Peer) {
           id = id.id;
         }
-        if (!protoHas.call(clientPeers, id)) {
+        if (!hasOwnProperty(clientPeers, id)) {
           return 0;
         }
         peers.push(id);
@@ -581,97 +553,10 @@
 
     // FUNCTIONS
 
-    function bridgeOnLoadHandler(bridge) {
-      // if onload event fires when queued or pending...
-      if (bridge.state < STATE_READY) {
-        // send first postMessage to window
-        // skipping utility, to avoid double-quotes
-        bridge.iframe.contentWindow.postMessage(bridge.ping, '*');
-        // (re)set state to pending, since we're now waiting
-        bridge.state = STATE_PENDING;
-        // allow half time for a response
-        // bridge.dDay(subetha.bridgeDelay/2);
-      } else {
-        // otherwise, destroy bridge
-        bridge.destroy();
-      }
-    }
-
     function removeEthaDiv() {
       if (docBody.contains(ethaDiv)) {
         // remove ethaDiv from DOM
         docBody.removeChild(ethaDiv);
-      }
-    }
-
-    // routes all post messages to active bridges
-    function bridgeRouter(evt) {
-      var
-        pkg = evt.data,
-        bridge,
-        bridgeState,
-        payload,
-        type;
-
-      // only parse when...
-      if (
-        // not expecting an object
-        !canPostObjects &&
-        // the message is a string
-        typeof pkg === 'string' &&
-        // it looks like an array
-        pkg.charAt(0) + pkg.charAt(pkg.length - 1) === '[]'
-      ) {
-        try {
-          pkg = JSONparse(pkg);
-        } catch (e) {
-          return;
-        }
-      }
-
-      /*
-      evt structure
-      {                             [evt]
-        origin: <url>,
-        data: {                     [payload]
-          mid: <guid>,
-          type: "...",
-          sent: <date>,
-          msg: {                     [msg]
-            ...
-          }
-        }
-      }
-      */
-
-      // security layer
-      if (
-        // an array
-        isArray(pkg) &&
-        // the first matches the protocol
-        pkg[0] == protocolVersion &&
-        // there are three elements total
-        pkg.length === 3 &&
-        // the second is the network of a known bridge
-        protoHas.call(bridges, pkg[1]) &&
-        // the bridge is pending or ready
-        (bridgeState = (bridge = bridges[pkg[1]]).state) > STATE_INITIAL &&
-        bridgeState < STATE_CLOSING &&
-        // the third is encoded JSON object
-        (payload = bridge.decode(pkg[2])) &&
-        // the payload has a msg-id
-        isFullString(payload.mid) &&
-        // the payload has a sent date
-        protoHas.call(payload, 'sent') &&
-        // the payload has a message
-        protoHas.call(payload, 'msg') &&
-        // the payload has a known type
-        protoHas.call(bridgeDataHandlers, (type = payload.type))
-      ) {
-        // set timer stamps
-        payload.sent = new Date(payload.sent);
-        // pass message to handler
-        bridgeDataHandlers[type](bridge, payload.msg, payload, evt);
       }
     }
 
@@ -698,7 +583,7 @@
           bridge;
 
         // resolve bridge
-        if (protoHas.call(bridges, networkId)) {
+        if (hasOwnProperty(bridges, networkId)) {
           bridge = bridges[networkId];
         } else {
           bridge = bridges[networkId] = new Bridge(networkId);
@@ -710,7 +595,8 @@
 
       // remove client from bridge
       removeClient = function (client) {
-        var bridge = client._bridge(privateKey);
+        var bridge = getBridgeFromClient(client);
+
         if (bridge) {
           bridge.removeClient(client);
         }
@@ -719,7 +605,7 @@
       // dereference global queue then add all pending clients
       clientQueue = 0;
       for (clientId in clients) {
-        if (protoHas.call(clients, clientId)) {
+        if (hasOwnProperty(clients, clientId)) {
           addClient(clients[clientId]);
         }
       }
@@ -733,9 +619,9 @@
       // this logic prevents a client from messaging itself
       if (
         // client exist
-        protoHas.call(clients, clientId) &&
+        hasOwnProperty(clients, clientId) &&
         // client has peer
-        protoHas.call((client = clients[clientId]).peers, peerId)
+        hasOwnProperty((client = clients[clientId]).peers, peerId)
       ) {
         peer = client.peers[peerId];
         handler(client, peer, data, {
@@ -785,6 +671,14 @@
       client.peers[peerData.id] = new Peer(peerData, client);
     }
 
+    function getBridgeFromClient(client) {
+      var bridge = hasOwnProperty(bridges, client._bid);
+
+      if (bridge && hasOwnProperty(bridge.clients, client)) {
+        return bridge;
+      }
+    }
+
     // CLASSES
 
     // basic event emitter
@@ -798,11 +692,11 @@
           isFullString(evt) &&
           typeof callback === 'function'
         ) {
-          if (!protoHas.call(me, '_evts')) {
+          if (!hasOwnProperty(me, '_evts')) {
             // init events hash
             me._evts = {};
           }
-          if (!protoHas.call(me._evts, evt)) {
+          if (!hasOwnProperty(me._evts, evt)) {
             // init event queue
             me._evts[evt] = [];
           }
@@ -818,12 +712,12 @@
           cbLn,
           argLn = arguments.length;
 
-        if (!protoHas.call(me, '_evts') || !argLn) {
+        if (!hasOwnProperty(me, '_evts') || !argLn) {
           // reset if clearing all events
           me._evts = {};
         } else if (
           isFullString(evt) &&
-          protoHas.call(me._evts, evt)
+          hasOwnProperty(me._evts, evt)
         ) {
           cbs = me._evts[evt];
           if (typeof callback == 'function') {
@@ -855,11 +749,11 @@
 
         if (
           isFullString(evt) &&
-          protoHas.call(me, '_evts') &&
-          protoHas.call(me._evts, evt) &&
+          hasOwnProperty(me, '_evts') &&
+          hasOwnProperty(me._evts, evt) &&
           (cbLn = (cbs = me._evts[evt]).length)
         ) {
-          params = protoSlice.call(arguments, 1);
+          params = arraySlice(arguments, 1);
           if (params.length) {
             callbackInvoker = function (cb) {
               cb.apply(me, params);
@@ -881,41 +775,26 @@
     function Bridge(network) {
       var
         bridge = this,
-        iframe = doc.createElement('iframe'),
-        cipher = new Morus();
+        iframe = doc.createElement('iframe');
 
       bridge.iframe = iframe;
       bridge.id = network;
-      bridge.cipher = cipher;
       bridge.clients = {};
       bridge.channels = {};
       bridge.channelCnts = {};
-      // payload for first load
-      bridge.ping = [
-        // protocol version
-        protocolVersion,
-        // speaker key
-        speakerKey,
-        // bridge identifier
-        network,
-        // encoding cipher
-        cipher.cipher()
-      ].join('`');
 
-      // if not already enabled, subscribe to events
+      // for the first bridge created
       if (!bridgeCnt++) {
-        bind(scope, 'message', bridgeRouter);
+        // subscribe to remove the ethadiv when the page unloads
         bind(scope, 'unload', removeEthaDiv);
       }
 
-      // scope iframe!onload handler to this instance
-      bridge.onLoad = function () {
-        bridgeOnLoadHandler(bridge);
-      };
+      // bind link as the iframe!onload handler for this instance
+      bridge.onLoad = bridge.link.bind(bridge);
 
       bind(iframe, 'load', bridge.onLoad);
 
-      if (protoHas.call(subetha.urls, network)) {
+      if (hasOwnProperty(subetha.urls, network)) {
         // use aliased network aliased
         iframe.src = subetha.urls[network];
       } else {
@@ -929,7 +808,7 @@
       // add bridge to ethadiv
       ethaDiv.appendChild(iframe);
 
-      // ensure iframe is (now) in the dom
+      // ensure iframe is in the dom
       if (!bridge.inDom()) {
         docBody.appendChild(ethaDiv);
       }
@@ -938,14 +817,88 @@
 
     mix(Bridge.prototype, {
 
-      // number of failed cipher decoding attempts
-      failures: 0,
-
       // bridges start queued, since they are immediately added to the dom
       state: STATE_QUEUED,
 
       // number of clients
       cnt: 0,
+
+      // create and send MessageChannel port to iframe
+      link: function () {
+        var
+          bridge = this,
+          mc;
+
+        // close any existing message channel
+        bridge.unlink();
+
+        // if linking before ready...
+        if (bridge.state < STATE_READY) {
+
+          // create new message channel
+          mc =
+          bridge.mc =
+            new MessageChannel();
+
+          // listen to the incoming port
+          // route "message" events
+          /*
+          message object
+          {
+            mid: <int>,
+            type: <string>,
+            data: <mixed>
+          }
+          */
+          mc.port1.onmessage = function (evt) {
+            var
+              msg = evt.data,
+              msgType = msg.type
+            ;
+
+            // only process known types
+            if (hasOwnProperty(portHandlers, msgType)) {
+              portHandlers[msgType](msg.data, msg, evt);
+            }
+
+          };
+
+          // send outgoing port to the iframe
+          bridge.iframe.contentWindow
+            .postMessage(
+              // bootstrap payload
+              {
+                protocol: protocolVersion,
+                network: bridge.id
+              },
+              '*',
+              [mc.port2]
+            );
+
+          // (re)set state to pending, since we're now waiting
+          bridge.state = STATE_PENDING;
+        } else {
+          // otherwise, destroy bridge
+          bridge.destroy();
+        }
+      },
+
+      // close an existing message channel
+      unlink: function () {
+        var
+          bridge = this,
+          mc = bridge.mc;
+
+        if (mc) {
+          // close the channel
+          mc.close();
+
+          // dereference the message channel and port handler
+          mc.port1.onmessage =
+          bridge.mc =
+            0;
+        }
+      },
 
       // add client to bridge
       addClient: function (client) {
@@ -955,13 +908,11 @@
           clientId = client.id;
 
         // init new clients
-        if (!protoHas.call(clients, clientId)) {
+        if (!hasOwnProperty(clients, clientId)) {
           // uptick tally
           bridge.cnt++;
-          // expose bridge via closured method
-          client._bridge = function (val) {
-            return val === privateKey && bridge;
-          };
+          // add network to client
+          client._bid = bridge.id;
           // add to client queue
           clients[clientId] = client;
         }
@@ -971,7 +922,6 @@
           // authenticate this client
           bridge.auth(client);
         }
-
       },
 
       // remove client from bridge, via client command
@@ -1023,6 +973,43 @@
         }
       },
 
+      // handle payload, sent via the incoming MessagePort
+      route: function (payload) {
+        var
+          bridge = this,
+          msgIdx = -1,
+          msg
+        ;
+
+        if (isArray(payload)) {
+          // process array of messages
+          while (msg = payload[++msgIdx]) {
+            bridge.process(msg);
+          }
+        } else {
+          // process one message
+          bridge.process(payload);
+        }
+
+      },
+
+      /*
+      message structure
+      {                     [message]
+        mid: <int>,
+        type: "...",
+        sent: <date>,
+        data: {}            [data]
+      }
+      */
+      // process a single message
+      process: function (message) {
+        var msgType = message.type;
+        if (hasOwnProperty(messageHandlers, msgType)) {
+          messageHandlers[msgType](this, message.data, message);
+        } /* else log/fire/throw error? */
+      },
+
       destroy: function () {
         var
           bridge = this,
@@ -1034,6 +1021,9 @@
         // kill any destruction timer
         bridge.dDay();
 
+        // destroy any messagechannel instance
+        bridge.unlink();
+
         // prevent clients from transmitting
         bridge.state = STATE_CLOSING;
 
@@ -1041,7 +1031,7 @@
         bridge.clients = {};
         bridge.cnt = 0;
         for (clientId in clients) {
-          if (protoHas.call(clients, clientId)) {
+          if (hasOwnProperty(clients, clientId)) {
             bridge.drop(clients[clientId]);
           }
         }
@@ -1061,8 +1051,6 @@
 
         // if this will be the last bridge
         if (!--bridgeCnt) {
-          // stop listening for messages
-          unbind(scope, 'message', bridgeRouter);
           // stop listening for unload
           unbind(scope, 'unload', removeEthaDiv);
           removeEthaDiv();
@@ -1087,9 +1075,6 @@
           clientState = client.state
         ;
 
-        // remove custom bridge method
-        delete client._bridge;
-
         // for pending and ready clients...
         if (clientState > STATE_QUEUED && clientState < STATE_CLOSING) {
 
@@ -1108,7 +1093,7 @@
 
         // inform client of removed peers
         for (peerId in peers) {
-          if (protoHas.call(peers, peerId)) {
+          if (hasOwnProperty(peers, peerId)) {
             // inform client this peer has dropped
             client.fire(DROP_EVENT, peers[peerId]);
           }
@@ -1119,44 +1104,6 @@
           // set client state (now)
           setClientState(client, STATE_INITIAL);
         }
-      },
-
-      // ensures an incoming message is valid
-      decode: function (coded) {
-        var
-          bridge = this,
-          cipher = bridge.cipher,
-          data;
-
-        // smell test before expensive try/catch
-        if (
-          // coded is a string
-          isFullString(coded) &&
-          // decodes
-          (data = cipher.decode(coded)) &&
-          // has json within decoded string (accounts for random beginning and ending chars)
-          (data = r_extractJSON.exec(data))
-        ) {
-          // exit if parsing failed
-          try {
-            data = JSONparse(data[1]);
-            // increment starting index (the bridge has already done this)
-            cipher.shift++;
-            // return data object
-            return data;
-          } catch (e) {
-            // silent exception
-          }
-        }
-
-        // check failure tolerance
-        if (++bridge.failures === 3) {
-          // destroy bridge
-          bridge.destroy();
-        }
-
-        // fail decoding
-        return 0;
       },
 
       // specifies when bridge iframe is in the page ethadiv and dom
@@ -1174,7 +1121,7 @@
         // stop current timebomb
         clearTimeout(bridge.timer);
 
-        // start new timebomb
+        // start new countdown
         if (ms) {
           bridge.timer = setTimeout(function () {
             bridge.destroy();
@@ -1183,29 +1130,25 @@
       },
 
       // send protocol message to bridge
-      send: function (type, msg) {
+      send: function (type, data) {
         var
           bridge = this,
-          msgId;
+          msgId = ++messageCount;
 
         // only send when ready
         if (bridge.state != STATE_READY) {
           return 0;
         }
 
-        msgId = guid();
-        postMessage(
-          bridge.iframe.contentWindow,
+        bridge.mc.port1.postMessage(
           // protocol message
           {
-            // key needed by bridge
-            key: speakerKey,
             // message identifier
             mid: msgId,
             // type of message
             type: type,
             // message content
-            msg: msg
+            data: data
           }
         );
 
@@ -1241,11 +1184,6 @@
       // connection state
       state: STATE_INITIAL,
 
-      // returns closured bridge when connected and passed correct key
-      _bridge: function () {
-        return false;
-      },
-
       // add client to bridge queue
       open: function (network) {
         var
@@ -1268,7 +1206,7 @@
 
           // update access credentials if given
           if (args.length > 1) {
-            me.credentials = protoSlice.call(args, 1);
+            me.credentials = arraySlice(args, 1);
           }
         }
 
@@ -1328,14 +1266,14 @@
       _transmit: function (type, peers, data) {
         var
           client = this,
-          bridge = client._bridge(privateKey);
+          bridge = getBridgeFromClient(client);
 
         if (
           bridge &&
           bridge.state == STATE_READY &&
           client.state == STATE_READY &&
           isFullString(type) &&
-          !protoHas.call(netEvts, type) &&
+          !hasOwnProperty(prohibitedEvents, type) &&
           (
             !peers ||
             (peers = resolvePeers(client.peers, peers))
@@ -1346,7 +1284,7 @@
             {
               type: type,
               from: client.id,
-              to: peers ? [].concat(peers) : 0,
+              to: peers || 0,
               data: data
             }
           );
@@ -1379,7 +1317,7 @@
 
 
     // if there is no postMessage method
-    if (typeof scope.postMessage !== 'function') {
+    if (unsupported) {
 
       // deny all clients
       Client.prototype.open = function () {
