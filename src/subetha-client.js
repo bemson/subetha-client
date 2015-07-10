@@ -12,8 +12,21 @@
 
     var
       mathRandom = Math.random,
+      noPromises = typeof Promise != 'function',
+      Promee = noPromises ?
+        function (cb) {
+          // fake passing resolve and reject methods
+          cb(noOp, noOp);
+        } : Promise,
+      // request ticker
+      requestsTicker = 0,
+      // open request queue
+      openRequests = {},
+      // pending request count
+      pendingRequestCnt = 0,
       hasOwnProperty = Function.prototype.call.bind(Object.prototype.hasOwnProperty),
       arraySlice = Function.prototype.call.bind(Array.prototype.slice),
+      objectKeys = Object.keys,
       doc = document,
       docBody,
       domReady = 0,
@@ -102,8 +115,9 @@
           data: <uri>         [data]
         }
         */
-        ready: function (bridge, origin) {
+        ready: function (origin) {
           var
+            bridge = this,
             clients = bridge.clients,
             clientId;
 
@@ -126,28 +140,29 @@
 
         // auth response from bridge
         /*
-        payload structure
-        {                 [payload]
-          mid: <guid>,
-          type: "auth",
-          sent: <date>,
-          msg: {          [msg]
-            id: <guid>,
-            ok: booly,
-            peers: {
-              <guid>: {
-                id: <guid>,
-                channel: <channel-name>,
-                origin: <uri>
-              },
-              ...
-            },       // optional for failures
-            reason: <string> // optional for faliures
+        // success payload
+
+        {
+          id: <guid>,
+          peers: {
+            <guid>: {
+              id: <guid>,
+              channel: <channel-name>,
+              origin: <uri>,
+              joined: <date>
+            },
+            ...
           }
         }
+
+        // failure payload
+
+        "<failure code>"
+
         */
-        auth: function  (bridge, msg) {
+        auth: function  (msg) {
           var
+            bridge = this,
             channels = bridge.channels,
             clients = bridge.clients,
             clientId = msg.id,
@@ -216,40 +231,38 @@
 
         // notify clients of network changes
         /*
-        data structure
-        {                           [payload]
-          mid: <guid>,
-          type: "net",
-          sent: <date>,
-          msg: {                    [msg]
-            joins: [
-              {
-                id: <guid>,
-                channel: <channel-name>,
-                origin: <url>,
-                start: <date>
-              },
-              ...
-            ],
-            drops: [
-              {
-                channel: <channel-name>,
-                ids: [ <guid>, ... ]
-              },
-              ...
-            ]
-          }
+        // changes structure
+
+        {
+          joins: [
+            {
+              id: <guid>,
+              channel: <channel-name>,
+              origin: <url>,
+              start: <date>
+            },
+            ...
+          ],
+          drops: [
+            {
+              channel: <channel-name>,
+              ids: [ <guid>, ... ]
+            },
+            ...
+          ]
         }
+
         */
-        net: function (bridge, msg) {
+        net: function (changes) {
           // create unique peers for clients in these channels
           // remove possible "bid" member - to not reveal bridge ids
           var
+            bridge = this,
             channelClients,
             clientId,
             client,
-            joins = msg.joins,
-            drops = msg.drops,
+            joins = changes.joins,
+            drops = changes.drops,
             peerData,
             peerId,
             peer,
@@ -333,88 +346,119 @@
 
         // handle killed bridge
         /*
-        data structure
-        {                           [payload]
-          mid: <guid>,
-          type: "die",
-          sent: <date>,
-          msg: <code-number>           [msg]
-        }
+        code structure
+
+        <exit code>
         */
-        die: function (bridge) {
+        die: function (code) {
+          var bridge = this;
+
           // remove from bridge now, so this bridge can't be reused by a reopening client
           bridge.deref();
           // notify clients
           bridge.destroy();
+
         },
 
-        // pass-thru client message
+        // handle client events
         /*
         data structure
-        {                           [payload]
-          mid: <guid>,
-          type: "client",
-          sent: <date>,
-          msg: {                    [msg]
-            type: <client-type>,
-            from: <guid>,
-            to: [<guid>, ...],
-            data: <arbitrary-data>  [data] *optional
-          }
+        {                    [msg]
+          type: <client-type>,
+          from: <guid>,
+          to: [<guid>, ...],
+          data: <mixed>  [data] *optional
         }
         */
-        client: function (bridge, msg, payload, evt) {
+        client: function (message, payload) {
           var
+            bridge = this,
             clients = bridge.clients,
-            peerId = msg.from,
+            fromPeerId = message.from,
             handlers = subetha.msgType,
             handler,
-            msgData,
-            clientId,
-            clientsLn,
-            targetClients;
-
-          // exit when there are no handlers or this type has no handler
+            msgType = message.type,
+            msgData = message.data,
+            recipientIds = message.to || bridge.getCids(),
+            recipientLn = recipientIds.length,
+            recipientId,
+            recipient,
+            msgMeta
+          ;
+          // exit when there are no handlers or none for this type
           if (
-            typeof handlers !== 'object' ||
-            !hasOwnProperty(handlers, msg.type)
+            typeof handlers != 'object' ||
+            !hasOwnProperty(handlers, msgType)
           ) {
             return;
           }
 
-          handler = handlers[msg.type];
-          targetClients = msg.to;
-          msgData = msg.data;
+          // get custom handler for this event
+          handler = handlers[msgType];
 
-          if (targetClients) {
-            clientsLn = targetClients.length;
-            // invoke handler on targeted clients
-            while (clientsLn--) {
-              checkAndSendCustomEvent(
-                clients,
-                targetClients[clientsLn],
-                peerId,
-                handler,
+          // create message meta object
+          msgMeta = {
+            mid: payload.mid,             // message id
+            sent: payload.sent,           // sent date
+            received: payload.received,   // recieve date
+          };
+
+          // invoke handler on all targeted clients
+          while (recipientLn--) {
+            // capture id
+            recipientId = recipientIds[recipientLn];
+
+            // only process known recipients whom are aware of the sending peer
+            if (
+              // recipient is known
+              hasOwnProperty(clients, recipientId) &&
+              // bridge is still ready
+              bridge.state == STATE_READY &&
+              // sender is known by recipient
+              hasOwnProperty((recipient = clients[recipientId]).peers, fromPeerId)
+            ) {
+              // invoke custom handler
+              handler(
+                // "to" client
+                recipient,
+                // "from" peer
+                recipient.peers[fromPeerId],
+                // custom event data
                 msgData,
-                msg,
-                payload,
-                evt
+                // message meta
+                msgMeta
               );
-            }
-          } else {
-            // invoke handler with all
-            for (clientId in clients) {
-              if (hasOwnProperty(clients, clientId)) {
-                checkAndSendCustomEvent(
-                  clients,
-                  clientId,
-                  peerId,
-                  handler,
-                  msgData,
-                  msg,
-                  payload,
-                  evt
-                );
+            } /* else log/error ? */
+          }
+        },
+
+        // handle sent message response
+        /*
+        data structure
+        {
+          rid: <int>,
+          ok: <bool>,
+          status: <code>
+        }
+        */
+        sent: function (response) {
+          var
+            bridge = this,
+            rid = response.rid
+            request,
+            client
+          ;
+          // if the request is pending
+          if (hasOwnProperty(openRequests, rid)) {
+            request = openRequests[rid];
+            client = request.client;
+            // if client is still active...
+            if (client.state == STATE_READY) {
+              // fulfill promise
+              if (response.ok) {
+                request.yes(response.status);
+              } else {
+                request.no(response.status);
               }
             }
           }
@@ -449,10 +493,9 @@
         handler signature
           1. receiving client instance
           2. sending peer instance
-          3. data (in msg)
+          3. data
           4. msg (in payload)
-          5. payload (decoded from event)
-          6. native post-message event
+          5. payload (message meta)
 
         data structure
         {                           [payload]
@@ -486,7 +529,19 @@
     ethaDiv.setAttribute('hidden', 'hidden');
     ethaDiv.setAttribute('data-owner', 'subetha');
 
+    // extend fake Promise... in order to fake Promises
+    if (noPromises) {
+      Promee.prototype.then =
+      Promee.prototype.catch =
+        function () {
+          return this;
+        };
+    }
+
     // UTILITY
+
+    // shared empty fnc
+    function noOp() {}
 
     function postMessage(win, msg) {
       win.postMessage(msg, '*');
@@ -553,6 +608,31 @@
 
     // FUNCTIONS
 
+    // route one or more messgae objects from a port mesage
+    function bridgePortRouter(evt) {
+      var
+        bridge = this,
+        payload = evt.data,
+        received = Date.now(),
+        msgIdx = -1,
+        msg
+      ;
+
+      if (isArray(payload)) {
+        // process multiple messages
+        while (msg = payload[++msgIdx]) {
+          bridge.process(msg, received);
+          // exit if bridge is now closed
+          if (bridge.state != STATE_READY) {
+            break;
+          }
+        }
+      } else {
+        // process the one message
+        bridge.process(payload, received);
+      }
+    }
+
     function removeEthaDiv() {
       if (docBody.contains(ethaDiv)) {
         // remove ethaDiv from DOM
@@ -611,28 +691,6 @@
       }
     }
 
-    function checkAndSendCustomEvent(clients, clientId, peerId, handler, data, msg, payload, evt) {
-      var
-        peer,
-        client;
-
-      // this logic prevents a client from messaging itself
-      if (
-        // client exist
-        hasOwnProperty(clients, clientId) &&
-        // client has peer
-        hasOwnProperty((client = clients[clientId]).peers, peerId)
-      ) {
-        peer = client.peers[peerId];
-        handler(client, peer, data, {
-          id: payload.mid,
-          peer: peer,
-          sent: new Date(payload.sent),
-          timeStamp: evt.timeStamp
-        });
-      }
-    }
-
     function setClientState(client, newState) {
       var oldState = client.state;
 
@@ -680,6 +738,86 @@
     }
 
     // CLASSES
+
+    // mechanism for handling async promises
+    function ClientRequest(client) {
+      var me = this;
+
+      // create request id
+      me.id = ++requestsTicker;
+      // reference client
+      me.client = client;
+
+      // make promise
+      me.promise = new Promee(function (resolve, reject) {
+        // expose Promise resolution functions
+        me.resolve = resolve;
+        me.reject = reject;
+      });
+
+    }
+
+    mix(ClientRequest.prototype, {
+
+      // resolve promise
+      yes: function () {
+        var
+          me = this,
+          args = arguments
+        ;
+
+        me.remove();
+
+        if (args.length) {
+          // approve promise with args
+          me.resolve.apply(scope, args);
+        } else {
+          // approve promise
+          me.resolve();
+        }
+      },
+
+      // reject promise
+      no: function (reason) {
+        var me = this;
+
+        me.remove();
+
+        if (reason) {
+          // reject promise with reason
+          me.reject(reason);
+        } else {
+          me.reject();
+        }
+      },
+
+      // place request up for responses
+      add: function () {
+        var me = this;
+
+        openRequests[me.id] = me;
+
+        // increment pending count
+        ++pendingRequestCnt;
+      },
+
+      // remove request from responses
+      remove: function () {
+        var me = this;
+
+        // dereference (instead of delete)
+        openRequests[me.id] = 0;
+
+        // if pending counter is now 0...
+        if (!--pendingRequestCnt) {
+          // reset openRequests queue
+          openRequests = {};
+        }
+
+      }
+
+    });
+
 
     // basic event emitter
     function EventEmitter() {}
@@ -842,26 +980,7 @@
 
           // listen to the incoming port
           // route "message" events
-          /*
-          message object
-          {
-            mid: <int>,
-            type: <string>,
-            data: <mixed>
-          }
-          */
-          mc.port1.onmessage = function (evt) {
-            var
-              msg = evt.data,
-              msgType = msg.type
-            ;
-
-            // only process known types
-            if (hasOwnProperty(portHandlers, msgType)) {
-              portHandlers[msgType](msg.data, msg, evt);
-            }
-
-          };
+          mc.port1.onmessage = bridgePortRouter.bind(bridge);
 
           // send outgoing port to the iframe
           bridge.iframe.contentWindow
@@ -915,6 +1034,8 @@
           client._bid = bridge.id;
           // add to client queue
           clients[clientId] = client;
+          // clear cids cache
+          bridge._cids = 0;
         }
 
         // if bridge is ready now...
@@ -935,6 +1056,8 @@
         if (--bridge.cnt) {
           // deference client
           delete bridge.clients[clientId];
+          // clear cids cache
+          bridge._cids = 0;
           // when authed
           if (client.state > STATE_QUEUED) {
             // remove client from channel
@@ -974,24 +1097,7 @@
       },
 
       // handle payload, sent via the incoming MessagePort
-      route: function (payload) {
-        var
-          bridge = this,
-          msgIdx = -1,
-          msg
-        ;
-
-        if (isArray(payload)) {
-          // process array of messages
-          while (msg = payload[++msgIdx]) {
-            bridge.process(msg);
-          }
-        } else {
-          // process one message
-          bridge.process(payload);
-        }
-
-      },
+      // payload is one or an array of message objects
 
       /*
       message structure
@@ -999,14 +1105,16 @@
         mid: <int>,
         type: "...",
         sent: <date>,
-        data: {}            [data]
+        data: <mixed>       [data]
       }
       */
       // process a single message
-      process: function (message) {
+      process: function (message, received) {
         var msgType = message.type;
         if (hasOwnProperty(messageHandlers, msgType)) {
-          messageHandlers[msgType](this, message.data, message);
+          // add meta to message
+          message.received = received;
+          messageHandlers[msgType].call(this, message.data, message);
         } /* else log/fire/throw error? */
       },
 
@@ -1153,7 +1261,18 @@
         );
 
         // return message id
-        return msgId;
+        return request.promise;
+      },
+
+      // return (cached) collection of client ids
+      getCids: function () {
+        var bridge = this;
+
+        if (!bridge._cids) {
+          bridge._cids = objectKeys(bridge.clients);
+        }
+
+        return bridge._cids;
       }
 
     });
@@ -1266,7 +1385,9 @@
       _transmit: function (type, peers, data) {
         var
           client = this,
-          bridge = getBridgeFromClient(client);
+          bridge = getBridgeFromClient(client),
+          request = new ClientRequest(client)
+        ;
 
         if (
           bridge &&
@@ -1279,18 +1400,28 @@
             (peers = resolvePeers(client.peers, peers))
           )
         ) {
-          return bridge.send(
+          if (bridge.send(
             'client',
             {
               type: type,
+              rid: request.id,
               from: client.id,
               to: peers || 0,
               data: data
-            }
-          );
+            })
+          ) {
+            // activate request for later resolution
+            request.add();
+          } else {
+            // reject request since send failed
+            request.no('failed');
+          }
+        } else {
+          // reject promise now
+          request.no('invalid message or state');
         }
 
-        return false;
+        return request.promise;
       }
 
     });
