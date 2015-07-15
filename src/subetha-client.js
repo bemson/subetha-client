@@ -5,33 +5,32 @@
  * Copyright 2014, Bemi Faison
  * Released under the Apache License
  */
-/* global define, require */
-!function (inAMD, inCJS, Array, Date, Math, Object, RegExp, scope, undefined) {
+/* global define */
+/* jshint scripturl:true */
+!function (inAMD, inCJS, Array, Date, Object, scope, undefined) {
 
   function initSubEtha() {
 
     var
-      mathRandom = Math.random,
+      // object to return when a value should not be captured
+      hashIgnoreFlag = {},
+      clientEventHandlers = {},
+      defaultBridgeTimeout = 10000,
       noPromises = typeof Promise != 'function',
       Promee = noPromises ?
         function (cb) {
           // fake passing resolve and reject methods
           cb(noOp, noOp);
         } : Promise,
-      // request ticker
-      requestsTicker = 0,
       // open request queue
-      openRequests = {},
-      // pending request count
-      pendingRequestCnt = 0,
+      // request ticker
+      ticker = 0,
       hasOwnProperty = Function.prototype.call.bind(Object.prototype.hasOwnProperty),
       arraySlice = Function.prototype.call.bind(Array.prototype.slice),
-      objectKeys = Object.keys,
       doc = document,
+      createElement = doc.createElement.bind(doc),
       docBody,
       domReady = 0,
-      rxp_guid = /[xy]/g,
-      guidPattern = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx',
       STATE_INITIAL = 0,
       STATE_QUEUED = 1,
       STATE_PENDING = 2,
@@ -42,8 +41,7 @@
       CONNECT_EVENT = '::connect',
       DISCONNECT_EVENT = '::disconnect',
       CHANGE_EVENT = '::readyStateChange',
-      prohibitedEvents = {},
-      supported = typeof
+      unsupported = typeof MessageChannel != 'function',
       // tests whether a string looks like a domain
       /*
       should pass:
@@ -66,20 +64,12 @@
       inFileProtocol = location.protocol.charAt(0) == 'f',
       // for domainish urls, use http when in "file:" protocol
       urlPrefix = inFileProtocol ? 'http://' : '//',
-      ethaDiv = doc.createElement('div'),
-      bridges = {},
-      bridgeCnt = 0,
-      // clients queued to open (before DOMReady)
-      clientQueue = {},
-      protocolVersion = 'se-0',
-      // add to global queue (before DOMReady)
-      addClient = function (client) {
-        clientQueue[client.id] = client;
-      },
-      // remove from global queue (before DOMReady)
-      removeClient = function (client) {
-        delete clientQueue[client.id];
-        setClientState(client, STATE_INITIAL);
+      ethaDiv = createElement('div'),
+      bridges = new Hash(),
+      protocolVersion = 'se-1',
+      serverList = {
+        'public': (inFileProtocol ? 'http:' : '') + '//rawgit.com/bemson/subetha-bridge/master/public_bridge.html',
+        'local': 'javascript:\'<scrip' + 't src="' + (inFileProtocol ? 'http:' : '') + '//rawgit.com/bemson/subetha-bridge/master/subetha-bridge.min.js"></script>\''
       },
       bind = scope.attachEvent ?
         function (object, eventName, callback) {
@@ -112,29 +102,29 @@
           mid: <int>,
           type: "ready",
           sent: <date>,
+          received: <date>,
           data: <uri>         [data]
         }
         */
         ready: function (origin) {
-          var
-            bridge = this,
-            clients = bridge.clients,
-            clientId;
+          var bridge = this;
 
-          // cancel timer
-          bridge.dDay();
+          // cancel abort timer
+          bridge.delayAbort();
 
-          // capture bridge origin, for logging?
+          // capture bridge origin... for logging?
           bridge.origin = origin;
 
           // note that bridge is ready
           bridge.state = STATE_READY;
 
-          // authorize queued clients
-          for (clientId in clients) {
-            if (hasOwnProperty(clients, clientId)) {
-              bridge.auth(clients[clientId]);
-            }
+          // if there are still queued agents
+          if (bridge.queued.length) {
+            // authorize currently queued agents
+            bridge.authAgents();
+          } else {
+            // exit, since there are no agents to authorize (and use this bridge)
+            bridge.destroy();
           }
         },
 
@@ -142,14 +132,16 @@
         /*
         // success payload
 
-        {
-          id: <guid>,
+        {                              [payload]
+          aid: <int>,                  // agent id
+          id: <int>,                   // network id
+          ok: 1,
           peers: {
-            <guid>: {
-              id: <guid>,
+            <int>: {                   // peer identifier
+              id: <int>,
               channel: <channel-name>,
               origin: <uri>,
-              joined: <date>
+              start: <date>
             },
             ...
           }
@@ -157,76 +149,93 @@
 
         // failure payload
 
-        "<failure code>"
+        {
+          aid: <int>                  // agent id
+          ok: 0,
+          status: <int>
+        }
 
         */
-        auth: function  (msg) {
+        auth: function  (message) {
           var
             bridge = this,
+            pending = bridge.pending,
+            agentIdx = message.idx,
+            agent = pending.get(agentIdx),
             channels = bridge.channels,
-            clients = bridge.clients,
-            clientId = msg.id,
-            hasPeers,
-            client,
-            clientPeers,
-            networkPeers,
+            nids = bridge.nids,
+            peerCfgs = message.peers,
+            peers,
+            clientId,
             peerId,
-            channelName;
+            client
+          ;
 
-          if (!hasOwnProperty(clients, clientId)) {
-            // avoid unknown clients
-            return;
-          }
-
-          // target client
-          client = clients[clientId];
-          // get peers
-          networkPeers = msg.peers;
-
-          // determine whether to keep or reject client
+          // avoid unknown/invalid/denied clients
           if (
-            // rejected
-            !msg.ok ||
-            // unwarranted authorization (wrong state client)
-            client.state !== STATE_PENDING
+            // unknown or non-pending agent
+            !agent ||
+            // denied authorication
+            !message.ok
           ) {
-            // boot client
-            bridge.remove(client);
+            // if there is a corresponding agent...
+            if (bridge.agents.has(agentIdx)) {
+              // drop from bridge
+              bridge.drop(agent);
+            }
+            // ignore message
             return;
           }
 
-          // clear peers
-          clientPeers = client.peers = {};
-          // add pre-existing peers
-          for (peerId in networkPeers) {
-            if (hasOwnProperty(networkPeers, peerId)) {
-              hasPeers = 1;
-              addPeerToClient(client, networkPeers[peerId]);
-            }
-          }
+          // alias client
+          client = agent.client;
+          // capture id given by network
+          clientId =
+          client.id =
+          agent.id =
+            message.id;
+          // add this agent to the network registry
+          nids[clientId] = agent;
 
-          // add to channel index
-          channelName = client.channel;
-          if (!hasOwnProperty(channels, channelName)) {
-            channels[channelName] = {};
-            bridge.channelCnts[channelName] = 0;
-          }
-          // add to channels index
-          channels[channelName][clientId] = client;
-          bridge.channelCnts[channelName]++;
+          // remove agent from pending stack
+          bridge.pending.del(agentIdx);
 
-          // announce ready state
-          setClientState(client, STATE_READY);
+          // alias agent using the network id
+          // the agentIdx is still .agents hash
+          bridge.authed.set(clientId, agent);
+          // add agent to (resolved) channel index
+          channels.get(agent.channel, new Hash())
+            .set(clientId, agent);
 
-          // announce each peer if we have them and we're still ready
-          if (hasPeers && client.state === STATE_READY) {
-            for (peerId in clientPeers) {
-              if (hasOwnProperty(clientPeers, peerId)) {
-                // pass additional flag to note this peer existed
-                client.fire(JOIN_EVENT, clientPeers[peerId], true);
+          // create new peers hash
+          peers =
+          agent.peers =
+            new Hash();
+          // create new client peers collection
+          client.peers = {};
+
+          // create unique peer instances for this client
+          objectEach(peerCfgs, function (peerCfg) {
+            // add peer to agent, silently
+            agent.addPeer(peerCfg, 1);
+          });
+
+          // if client state change is not reversed..
+          if (agent.change(STATE_READY)) {
+            // fire join notification per peer
+            for (peerId in peers) {
+              if (hasOwnProperty(peers, peerId)) {
+                // announce each connecting peer
+                agent.announcePeer(peers[peerId], 1);
+                // exit if the agent state changed
+                // this means an event handler closed the connection
+                if (agent.state != STATE_READY) {
+                  break;
+                }
               }
             }
           }
+
         },
 
         // notify clients of network changes
@@ -258,88 +267,80 @@
           // remove possible "bid" member - to not reveal bridge ids
           var
             bridge = this,
-            channelClients,
-            clientId,
-            client,
             joins = changes.joins,
-            drops = changes.drops,
-            peerData,
-            peerId,
-            peer,
-            ln,
-            changeSets,
-            csLn,
-            peeredClients,
-            pcLn;
+            dropSets = changes.drops,
+            dropSet,
+            channel,
+            peerCfg,
+            ln
+          ;
 
 
-          // handle joins
-          ln = joins.length;
-          while (ln--) {
-            // get peer data
-            peerData = joins[ln];
-            peerId = peerData.id;
+          // loop functions
 
-            // get clients in this channel
-            channelClients = bridge.channels[peerData.channel];
-            // reset list of clients that gained peers
-            peeredClients = [];
-
-            // add a unique peer instance to clients that don't have one
-            for (clientId in channelClients) {
-              if (
-                clientId != peerId &&
-                hasOwnProperty(channelClients, clientId) &&
-                !hasOwnProperty((client = channelClients[clientId]).peers, peerId)
-              ) {
-                addPeerToClient(client, peerData);
-                // track that this client should be notified
-                peeredClients.push(client);
-              }
-            }
-
-            // only notify clients that gained this peer
-            pcLn = peeredClients.length;
-            while (pcLn--) {
-              client = peeredClients[pcLn];
-              client.fire(JOIN_EVENT, client.peers[peerId]);
+          // add the peer to the agent
+          function netAdder(agent) {
+            if (bridge.state == STATE_READY && agent.state == STATE_READY) {
+              agent.addPeer(peerCfg);
             }
           }
 
-          // handle drops
-          ln = drops.length;
-          while (ln--) {
-            changeSets = [];
-            // get peer data
-            peerData = drops[ln];
-            peerId = peerData.id;
+          // remove each peers from the agent
+          function netRemover(agent) {
+            var
+              ids = dropSet.ids,
+              idx = ids.length + 1
+            ;
+
+            if (bridge.state == STATE_READY && agent.state == STATE_READY) {
+              // remove each peer from agent
+              while (id = ids[--idx]) {
+                agent.removePeer(id);
+              }
+            }
+          }
+
+          // process joins
+          ln = joins.length + 1;
+          while (peerCfg = joins[--ln]) {
+            // exit if bridge is closed
+            if (bridge.state != STATE_READY) {
+              return;
+            }
 
             // get clients in this channel
-            channelClients = bridge.channels[peerData.channel];
+            channel = channels.get(peerCfg.channel);
 
-            // remove peer from each client in this channel
-            for (clientId in channelClients) {
-              if (
-                clientId != peerId &&
-                hasOwnProperty(channelClients, clientId)
-              ) {
-                client = channelClients[clientId];
-                peer = client.peers[peerId];
-                changeSets.push([client, peer]);
-                // set client state
-                peer.state = 0;
-                delete client.peers[peerId];
-              }
+            // skip if this bridge has no clients in this channel
+            if (!channel) {
+              continue;
             }
 
-            // fire drop event on each client, passing the removed peer
-            csLn = changeSets.length;
-            while (csLn--) {
-              client = changeSets[csLn][0];
-              if (client.id != peerId) {
-                client.fire(DROP_EVENT, changeSets[csLn][1]);
-              }
+            // add and announce this peer to each client in this channel
+            channel.each(netAdder);
+          }
+
+          // process drop sets
+          ln = dropSets.length + 1;
+          while (dropSet = dropSets[--ln]) {
+            // exit if bridge is closed
+            if (bridge.state != STATE_READY) {
+              return;
             }
+
+            // get clients in the dropset channel
+            channel = channels.get(dropSet.channel);
+
+            // skip if this bridge has no clients in this channel
+            if (!channel) {
+              continue;
+            }
+
+            // remove each peer id from the bridge registry
+            bridge.deregNids(dropSet.ids);
+
+            // drop and announce peers, leaving each client in this channel
+            channel.each(netRemover);
           }
 
         },
@@ -351,13 +352,8 @@
         <exit code>
         */
         die: function (code) {
-          var bridge = this;
-
-          // remove from bridge now, so this bridge can't be reused by a reopening client
-          bridge.deref();
-          // notify clients
-          bridge.destroy();
-
+          // remove bridge and disconnect clients
+          this.destroy(code);
         },
 
         // handle client events
@@ -373,62 +369,91 @@
         client: function (message, payload) {
           var
             bridge = this,
-            clients = bridge.clients,
-            fromPeerId = message.from,
-            handlers = subetha.msgType,
-            handler,
-            msgType = message.type,
+            fromId = message.from,
             msgData = message.data,
-            recipientIds = message.to || bridge.getCids(),
-            recipientLn = recipientIds.length,
-            recipientId,
-            recipient,
-            msgMeta
+            recipients = message.to,
+            handlerName = message.type,
+            handler,
+            client,
+            idx = -1,
+            msgInfo,
+            clientPeers,
+            fromPeer
           ;
-          // exit when there are no handlers or none for this type
+          // early exit when...
           if (
-            typeof handlers != 'object' ||
-            !hasOwnProperty(handlers, msgType)
+            // no handlers for this message type
+            !hasOwnProperty(clientEventHandlers, handlerName) ||
+            // unknown sender (not in bridge registry)
+            !hasOwnProperty(bridge.nids, fromId) ||
+            // get event handler
+            typeof (handler = clientEventHandlers[handlerName]) != 'function'
           ) {
+            // log error(s)?
             return;
           }
 
-          // get custom handler for this event
-          handler = handlers[msgType];
+          // get copy of sender - an object literal
+          sender = mix({}, nids[fromId]);
+          // use channel as pool of recipients
+          channel = bridge.channels.get(sender.channel);
 
-          // create message meta object
-          msgMeta = {
+          // exit when this bridge has no agents from this channel
+          if (!channel) {
+            // log error?
+            return;
+          }
+
+          // when broadcasting to all clients...
+          if (!recipients) {
+            // target all clients in the channel
+            recipients = channel.keys;
+          }
+
+          // create meta message object, for event handlers
+          msgInfo = {
             mid: payload.mid,             // message id
             sent: payload.sent,           // sent date
             received: payload.received,   // recieve date
+            broadcast: !message.to,       // flag when this is a broadcast
+            recipients: recipients.length // number of recipients
           };
 
           // invoke handler on all targeted clients
-          while (recipientLn--) {
-            // capture id
-            recipientId = recipientIds[recipientLn];
-
-            // only process known recipients whom are aware of the sending peer
+          while (agent = recipients[++idx]) {
+            // exit if bridge is down
+            if (bridge.state != STATE_READY) {
+              return;
+            }
+            // alias client
+            client = agent.client;
+            // skip if client/peer state is invalid
             if (
-              // recipient is known
-              hasOwnProperty(clients, recipientId) &&
-              // bridge is still ready
-              bridge.state == STATE_READY &&
-              // sender is known by recipient
-              hasOwnProperty((recipient = clients[recipientId]).peers, fromPeerId)
+              agent.state != STATE_READY ||
+              // peers has been abused
+              typeof (clientPeers = client.peers) != 'object' ||
+              // sender is not a Peer or in client's peers collection
+              !((fromPeer = clientPeers[fromId]) instanceof Peer) // ||
+              /*
+              TODO: enable client-peer blocklist
+              // client is ignoring this sender
+              hasOwnProperty(agent.ignored, fromId) //
+              */
             ) {
-              // invoke custom handler
-              handler(
-                // "to" client
-                recipient,
-                // "from" peer
-                recipient.peers[fromPeerId],
-                // custom event data
-                msgData,
-                // message meta
-                msgMeta
-              );
-            } /* else log/error ? */
+              continue;
+            }
+
+            // invoke custom handler
+            handler(
+              // "to" client
+              client,
+              // "from" peer
+              fromPeer,
+              // custom event data
+              msgData,
+              // message meta
+              msgInfo
+            );
           }
         },
 
@@ -444,21 +469,19 @@
         sent: function (response) {
           var
             bridge = this,
-            rid = response.rid
-            request,
-            client
+            request = bridge.requests.del(response.rid),
+            status = response.status
           ;
-          // if the request is pending
-          if (hasOwnProperty(openRequests, rid)) {
-            request = openRequests[rid];
-            client = request.client;
-            // if client is still active...
-            if (client.state == STATE_READY) {
+          // if the request exists...
+          if (request) {
+            agent = request.agent;
+            // if agent is still active...
+            if (agent.state == STATE_READY) {
               // fulfill promise
               if (response.ok) {
-                request.yes(response.status);
+                request.yes(status);
               } else {
-                request.no(response.status);
+                request.no(status);
               }
             }
           }
@@ -470,10 +493,7 @@
       subetha = {
 
         // number of milliseconds to wait for the bridge to connect
-        bridgeTimeout: 10000,
-
-        // expose guid function
-        guid: guid,
+        bridgeTimeout: defaultBridgeTimeout,
 
         Client: Client,
 
@@ -483,10 +503,7 @@
 
         protocol: protocolVersion,
 
-        urls: {
-          'public': (inFileProtocol ? 'http:' : '') + '//rawgit.com/bemson/subetha-bridge/master/public_bridge.html',
-          'local': 'javascript:\'<script src="' + (inFileProtocol ? 'http:' : '') + '//rawgit.com/bemson/subetha-bridge/master/subetha-bridge.min.js"></script>\''
-        },
+        servers: serverList,
 
         // collection of client types this client can process
         /*
@@ -499,29 +516,22 @@
 
         data structure
         {                           [payload]
-          mid: <guid>,
+          mid: <int>,
           type: "client",
           sent: <date>,
-          msg: {                    [msg]
+          data: {                    [msg]
+            rid: <int>,
             type: "event",
-            from: <guid>,
-            to: [<guid>, ...],
+            from: <int>,
+            to: [<int>, ...],
             data: <event-data>      [data] *optional
           }
         }
         */
-        msgType: {}
+        msgType: clientEventHandlers
 
       }
     ;
-
-    // create prohibited events look up
-    prohibitedEvents[DROP_EVENT] =
-    prohibitedEvents[JOIN_EVENT] =
-    prohibitedEvents[CHANGE_EVENT] =
-    prohibitedEvents[CONNECT_EVENT] =
-    prohibitedEvents[DISCONNECT_EVENT] =
-      1;
 
     // build ethadiv
     ethaDiv.style.display = 'none';
@@ -529,10 +539,10 @@
     ethaDiv.setAttribute('hidden', 'hidden');
     ethaDiv.setAttribute('data-owner', 'subetha');
 
-    // extend fake Promise... in order to fake Promises
+    // extend fake Promise, in order to... fake Promises
     if (noPromises) {
       Promee.prototype.then =
-      Promee.prototype.catch =
+      Promee.prototype['catch'] =
         function () {
           return this;
         };
@@ -543,18 +553,15 @@
     // shared empty fnc
     function noOp() {}
 
-    function postMessage(win, msg) {
-      win.postMessage(msg, '*');
-    }
-
     // shallow object merge
     function mix(base) {
       var
-        argIdx = 1,
+        argIdx = -1,
         source,
-        member;
+        member
+      ;
 
-      for (; source = arguments[argIdx]; argIdx++) {
+      for (; source = arguments[++argIdx];) {
         for (member in source) {
           if (hasOwnProperty(source, member)) {
             base[member] = source[member];
@@ -564,77 +571,159 @@
       return base;
     }
 
-    // generates a guaranteed unique id
-    function guid() {
-      return guidPattern.replace(rxp_guid, guid_helper);
-    }
+    // loop over an object's keys
+    function objectEach(obj, fn) {
+      var key;
 
-    // guid helper, for replacing characters
-    function guid_helper (c) {
-      var
-        r = mathRandom() * 16 | 0,
-        v = c === 'x' ? r : (r & 0x3 | 0x8);
-
-      return v.toString(16);
+      for (key in obj) {
+        if (hasOwnProperty(obj, key)) {
+          fn(obj[key], key);
+        }
+      }
     }
 
     function isFullString(value) {
       return value && typeof value === 'string';
     }
 
-    function resolvePeers(clientPeers, vals) {
-      var
-        peers = [],
-        id,
-        ln;
-
-      if (!isArray(vals)) {
-        vals = [vals];
-      }
-      ln = vals.length;
-
-      while (ln--) {
-        id = vals[ln];
-        if (id instanceof Subetha.Peer) {
-          id = id.id;
-        }
-        if (!hasOwnProperty(clientPeers, id)) {
-          return 0;
-        }
-        peers.push(id);
-      }
-      return peers;
-    }
-
     // FUNCTIONS
 
-    // route one or more messgae objects from a port mesage
+    // return auth request object invoked per queued agent
+    function makeAgentReqAuthCfg(agent, agentIdx) {
+      var
+        client = agent.client,
+        creds = 0
+      ;
+
+      // exit if app denies authorizing this client
+      if (!agent.change(STATE_PENDING)) {
+        // send flag so that the returned value is not captured
+        return hashIgnoreFlag;
+      }
+
+      // ensure credentials is an array
+      if (hasOwnProperty(client, 'credentials')) {
+        creds = client.credentials;
+        if (!isArray(creds)) {
+          creds = [creds];
+        }
+      }
+
+      // move agent to the pending list
+      agent.bridge.pending.set(agentIdx, agent);
+
+      // add an agent authorization request
+      return {
+        aid: agentIdx,              // agent id
+        channel: client.channel,    // channel
+        creds: creds                // credentials
+      };
+    }
+
+    function getActiveClientIndex(client) {
+      return activeClients.indexOf(client);
+    }
+
+    // remove expired slots in the active clients array
+    function pruneActiveClients() {
+      var idx = activeClients.length;
+
+      // exit when there are no active clients
+      if (!idx) {
+        return;
+      }
+
+      // decrement until we find a non non-empty index
+      do {
+        --idx;
+      } while (~idx && !activeClients[idx]);
+      // reset length to prune empty indice
+      activeClients.length = idx + 1;
+    }
+
+    // get corresponding agent in bridge for this client
+    function getAgent(client) {
+      var
+        agent,
+        activeIdx
+      ;
+
+      // if there is an "_idx" property
+      if (hasOwnProperty(client, '_idx')) {
+        // retrieve the agent at the (untrusted) client index
+        agent = agents.get(client._idx);
+        // return the (validated) corresponding agent
+        if (agent && agent.client === client) {
+          return agent;
+        }
+      }
+
+      // otherwise, attempt array-reference lookup
+
+      // search for this client
+      activeIdx = getActiveClientIndex(client);
+      // when there is an active client
+      if (~activeIdx) {
+        // get corresponding agent at the same index
+        agent = agents.get(activeIdx);
+        // if there is an agent...
+        if (agent) {
+          // capture the client index - for faster lookup next time
+          client._idx = activeIdx;
+          return agent;
+        } else {
+          // remove (orphaned?) active client
+          // we should never hit this line of code
+          activeClients[activeIdx] = 0;
+        }
+      }
+    }
+
+    // route the array of subetha-messages from the port message event
+    /*
+    handle payload, sent via the incoming MessagePort
+    payload is one or an array of message objects
+    message structure
+    {                     [message]
+      mid: <int>,
+      type: <string>,
+      sent: <date>,
+      received: <date>,   // added by host
+      data: <mixed>       [data]
+    }
+    */
     function bridgePortRouter(evt) {
       var
         bridge = this,
         payload = evt.data,
         received = Date.now(),
         msgIdx = -1,
-        msg
+        msg,
+        msgType
       ;
 
-      if (isArray(payload)) {
-        // process multiple messages
-        while (msg = payload[++msgIdx]) {
-          bridge.process(msg, received);
-          // exit if bridge is now closed
-          if (bridge.state != STATE_READY) {
-            break;
-          }
+      // process multiple messages
+      while (msg = payload[++msgIdx]) {
+        // capture message type
+        msgType = msg.type;
+        // add "received" member
+        msg.received = received;
+
+        // if there is a handler for this message type
+        if (hasOwnProperty(messageHandlers, msgType)) {
+          // invoke handler, scoped to bridge, with data and full message
+          messageHandlers[msgType].call(bridge, msg.data, msg);
+        } /* else log/fire/throw error? */
+
+        // stop processing messages, if the bridge is no longer ready
+        if (bridge.state != STATE_READY) {
+          break;
         }
-      } else {
-        // process the one message
-        bridge.process(payload, received);
       }
     }
 
     function removeEthaDiv() {
-      if (docBody.contains(ethaDiv)) {
+      if (docBody && docBody.contains(ethaDiv)) {
         // remove ethaDiv from DOM
         docBody.removeChild(ethaDiv);
       }
@@ -642,9 +731,6 @@
 
     // complete subetha initialization
     function onDomReady() {
-      var
-        clients = clientQueue,
-        clientId;
 
       // set domReady flag
       domReady = 1;
@@ -652,172 +738,748 @@
       // alias body
       docBody = doc.body;
 
-      // remove listeners
+      // remove DOM listeners
       unbind(scope, 'DOMContentLoaded', onDomReady);
       unbind(scope, 'load', onDomReady);
 
-      // add client to resolved bridge
-      addClient = function (client) {
-        var
-          networkId = client.url,
-          bridge;
-
-        // resolve bridge
-        if (hasOwnProperty(bridges, networkId)) {
-          bridge = bridges[networkId];
-        } else {
-          bridge = bridges[networkId] = new Bridge(networkId);
-        }
-
-        // add client to bridge
-        bridge.addClient(client);
-      };
-
-      // remove client from bridge
-      removeClient = function (client) {
-        var bridge = getBridgeFromClient(client);
-
-        if (bridge) {
-          bridge.removeClient(client);
-        }
-      };
-
-      // dereference global queue then add all pending clients
-      clientQueue = 0;
-      for (clientId in clients) {
-        if (hasOwnProperty(clients, clientId)) {
-          addClient(clients[clientId]);
-        }
-      }
-    }
-
-    function setClientState(client, newState) {
-      var oldState = client.state;
-
-      // exit when not changing the state
-      if (newState === oldState) {
-        return;
-      }
-
-      // set new client state
-      client.state = newState;
-      // announce change
-      client.fire(CHANGE_EVENT, newState, oldState);
-
-      // exit if the state was changed, after this event
-      if (client.state !== newState) {
-        return;
-      }
-
-      if (newState === STATE_INITIAL) {
-        // clear peers
-        client.peers = {};
-        // fire disconnect event if connected
-        if (oldState > STATE_PENDING) {
-          client.fire(DISCONNECT_EVENT);
-        }
-      }
-
-      if (newState === STATE_READY) {
-        client.fire(CONNECT_EVENT);
-      }
-
-    }
-
-    function addPeerToClient(client, peerData) {
-      // add peer to client if not the client
-      client.peers[peerData.id] = new Peer(peerData, client);
-    }
-
-    function getBridgeFromClient(client) {
-      var bridge = hasOwnProperty(bridges, client._bid);
-
-      if (bridge && hasOwnProperty(bridge.clients, client)) {
-        return bridge;
-      }
+      // open all bridges
+      bridges.each(function (bridge) {
+        bridge.open();
+      });
     }
 
     // CLASSES
 
+    function Hash(val) {
+      var
+        hash = this,
+        items = {},
+        keys = [],
+        key,
+        length = 0
+      ;
+
+      // init memoization space
+      hash._mf = {};
+
+      // if given an initial value
+      if (typeof val == 'object') {
+        for (key in val) {
+          if (hasOwnProperty(val, key)) {
+            // copy key and value
+            items[key] = val[key];
+            // capture key
+            key.push(key);
+            // increment length
+            ++length;
+          }
+        }
+      }
+
+      // set as items
+      hash.items = items;
+      hash.length = length;
+      hash.keys = keys;
+    }
+
+    mix(Hash.prototype, {
+      _mv: 0,
+      set: function (key, value) {
+        var hash = this;
+
+        if (!hash.has(key)) {
+          ++hash.length;
+          hash.keys.push(key);
+        }
+        hash.items[key] = value;
+
+        return value;
+      },
+      del: function (key) {
+        var
+          hash = this,
+          removedValue = hash.get(key),
+          keys = hash.keys
+        ;
+
+        if (removedValue) {
+          delete hash.items[key];
+          --hash.length;
+          keys.splice(keys.indexOf(key), 1);
+          return removedValue;
+        }
+      },
+      has: function (key) {
+        return hasOwnProperty(this.items, key);
+      },
+      get: function (key, defaultValue) {
+        var hash = this;
+
+        if (hash.has(key)) {
+          return hash.items[key];
+        } else if (defaultValue) {
+          // set first value with key
+          return hash.set(key, defaultValue);
+        }
+      },
+      clear: function () {
+        var hash = this;
+
+        hash.items = {};
+        hash.length = 0;
+      },
+      each: function (fn) {
+        var
+          hash = this,
+          items = hash.items,
+          val,
+          returnedValues = [],
+          key
+        ;
+        for (key in items) {
+          if (hasOwnProperty(items, key)) {
+            val = fn(items[key], key);
+            if (val !== hashIgnoreFlag) {
+              returnedValues.push(fn(items[key], key));
+            }
+          }
+        }
+        return returnedValues;
+      },
+      copy: function () {
+        return new Hash(this.items);
+      }
+    });
+
     // mechanism for handling async promises
-    function ClientRequest(client) {
-      var me = this;
+    function Request(agent) {
+      var request = this;
 
       // create request id
-      me.id = ++requestsTicker;
-      // reference client
-      me.client = client;
+      request.id = ++ticker;
+      // reference agent
+      request.agent = agent;
 
       // make promise
-      me.promise = new Promee(function (resolve, reject) {
+      request.promise = new Promee(function (resolve, reject) {
         // expose Promise resolution functions
-        me.resolve = resolve;
-        me.reject = reject;
+        request.resolve = resolve;
+        request.reject = reject;
       });
 
     }
 
-    mix(ClientRequest.prototype, {
+    mix(Request.prototype, {
 
       // resolve promise
-      yes: function () {
-        var
-          me = this,
-          args = arguments
-        ;
+      yes: function (status) {
+        var request = this;
 
-        me.remove();
+        request.done();
 
-        if (args.length) {
-          // approve promise with args
-          me.resolve.apply(scope, args);
-        } else {
-          // approve promise
-          me.resolve();
-        }
+        // approve promise with args
+        request.resolve(status);
       },
 
       // reject promise
-      no: function (reason) {
-        var me = this;
+      no: function (status) {
+        var request = this;
 
-        me.remove();
+        request.done();
 
-        if (reason) {
-          // reject promise with reason
-          me.reject(reason);
-        } else {
-          me.reject();
-        }
+        // reject promise with status
+        request.reject(status);
       },
 
       // place request up for responses
-      add: function () {
-        var me = this;
+      log: function () {
+        var request = this;
 
-        openRequests[me.id] = me;
-
-        // increment pending count
-        ++pendingRequestCnt;
+        // add to bridge requests
+        request.agent.bridge.requests.set(request.id, request);
       },
 
       // remove request from responses
-      remove: function () {
-        var me = this;
+      done: function () {
+        var
+          request = this,
+          agent = request.agent
+        ;
 
-        // dereference (instead of delete)
-        openRequests[me.id] = 0;
+        // remove from bridge requests
 
-        // if pending counter is now 0...
-        if (!--pendingRequestCnt) {
-          // reset openRequests queue
-          openRequests = {};
+        // testing for agent, since a code path allows invoking
+        // this method without a valid `.agent`
+        if (agent) {
+          agent.bridge.requests.del(request.id);
         }
-
       }
 
     });
 
+    function Bridge(network) {
+      var bridge = this;
+
+      bridge.iframe = iframe;
+      bridge.id = network;
+
+      // create hashes
+      bridge.agents = new Hash();
+      bridge.queued = new Hash();
+      bridge.pending = new Hash();
+      bridge.authed = new Hash();
+      bridge.channels = new Hash();
+      bridge.requests = new Hash();
+      // simple collection of all network ids
+      bridge.nids = {};
+
+    }
+
+    mix(Bridge.prototype, {
+
+      // bridges start queued, since they are immediately added to the dom
+      state: STATE_INITIAL,
+
+      // number of clients
+      cnt: 0,
+
+      // timer for authenticating agents
+      authTimer: 0,
+
+      // add and watch iframe
+      open: function () {
+        var
+          bridge = this,
+          iframe,
+          timeout = subetha.bridgeTimeout
+        ;
+
+        // exit when already opening/opened or dom is not ready
+        if (bridge.state > STATE_INITIAL) {
+          return;
+        }
+
+        // set bridge state to queued
+        bridge.state = STATE_QUEUED;
+
+        // create iframe
+        iframe =
+        bridge.iframe =
+          createElement('iframe');
+
+        // define method for binding to this iframe's !onload event
+        bridge.onLoad = bridge.rig.bind(bridge);
+        // bind pre-bound method for whenever this iframe fire's it's load event
+        bind(iframe, 'load', bridge.onLoad);
+
+        // define bound global router for this bridge, for use in link()
+        bridge.onMessage = bridgePortRouter.bind(bridge);
+
+        if (hasOwnProperty(subetha.urls, network)) {
+          // use aliased network aliased
+          iframe.src = subetha.urls[network];
+        } else {
+          // use raw network
+          iframe.src = network;
+        }
+
+        // give bridge time to connect
+        bridge.delayAbort(isNaN(timeout) ? defaultBridgeTimeout : parseInt(timeout, 10));
+
+        // add bridge to ethadiv
+        ethaDiv.appendChild(iframe);
+
+        // ensure iframe is in the dom
+        if (!bridge.inDom()) {
+          docBody.appendChild(ethaDiv);
+        }
+
+      },
+
+      // remove peers from registry
+      // this should only be called via the "net" event handler
+      deregNids: function (peers) {
+        var
+          nids = this.nids,
+          ln = nids.length + 1
+        ;
+        while (ln--) {
+          delete nids[peers[ln]];
+        }
+      },
+
+      // send MessageChannel port to iframe
+      rig: function () {
+        var
+          bridge = this,
+          mc
+        ;
+
+        // exit to prohibit a bridge from
+        // reloading after establishing a connection
+        if (bridge.state > STATE_PENDING) {
+          bridge.destroy();
+          return;
+        }
+
+        // close any existing message channel
+        bridge.unrig();
+
+        // (re)set state to pending
+        bridge.state = STATE_PENDING;
+
+        // create new message channel
+        mc = new MessageChannel();
+
+        // track message channel port
+        bridge.port = mc.port1;
+
+        // listen to the incoming port
+        // route "message" events with pre-bound bridge method
+        mc.port1.onmessage = bridge.onMessage;
+
+        // send outgoing port to the iframe
+        bridge.iframe.contentWindow.postMessage(
+          // bootstrap payload
+          {
+            protocol: protocolVersion,
+            network: bridge.id
+          },
+          '*',
+          // transfer port
+          [mc.port2]
+        );
+      },
+
+      // close any existing message channel
+      unrig: function () {
+        var
+          bridge = this,
+          port = bridge.port
+        ;
+        // if there is a message channel...
+        if (port) {
+          // close the port
+          port.close();
+
+          // dereference the port (listener) and message channel
+          port.onmessage =
+          bridge.port =
+            0;
+        }
+      },
+
+      // add agent to the bridge (queue)
+      join: function (agent) {
+        var
+          bridge = this,
+          agentIdx = agent.idx
+        ;
+
+        // exit if agent gets closed after event callbacks
+        if (!agent.change(STATE_QUEUED)) {
+          return;
+        }
+
+        // add agent to queued list
+        bridge.queued.set(agentIdx, agent);
+        // add agent to master list
+        bridge.agents.set(agentIdx, agent);
+
+        if (bridge.state == STATE_READY) {
+          // schedule agent authenticating for later
+          bridge.delayAuths(1);
+        }
+      },
+
+      // remove agent from bridge
+      drop: function (agent) {
+        var
+          bridge = this,
+          agentState = agent.state,
+          agentIdx = agent.idx,
+          agents = bridge.agents,
+          clientId = agent.id,
+          channels = bridge.channels,
+          channelName = agent.channel,
+          channel,
+          hash
+        ;
+
+        // resolve and remove agent from temporary hash
+        if (agentState == STATE_QUEUED) {
+          hash = bridge.queued;
+        } else if (agentState == STATE_PENDING) {
+          hash = bridge.pending;
+        }
+        if (hash) {
+          hash.del(agentIdx);
+        }
+        // (always) remove from master list
+        agents.del(agentIdx);
+
+        // if there is a network id...
+        if (clientId) {
+          // remove network id
+          bridge.authed.del(clientId);
+          // remove client from network registry
+          delete bridge.nids[clientId];
+
+          // get channel
+          channel = channels.get(channelName);
+          // if there is a channel for this agent...
+          if (channel) {
+            // remove agent from channel
+            channel.del(clientId);
+            // if there are no more agents in this channel...
+            if (!channel.length) {
+              // remove channel
+              channels.del(channelName);
+            }
+          }
+        }
+
+        // deactivate corresponding client
+        activeClients[agentIdx] = 0;
+        // if we deactivated the last client...
+        if (activeClients.length == agentIdx) {
+          // prune other deactivated client indice
+          pruneActiveClients();
+        }
+
+        // notify client of state change
+        agent.change(STATE_CLOSING);
+
+        // if there are no more agents...
+        if (!agents.length) {
+          // destroy bridge (since there are no more agents)
+          // other hosts will inform that this client disconected
+          // this saves having to send two messages to the bridge
+          bridge.destroy();
+        } else if (agentState > STATE_QUEUED) {
+
+          // otherwise, if the agent is/was on the network
+
+          // tell network to drop this agent
+          bridge.send('drop', clientId);
+        }
+
+      },
+
+      // clear (and reset) delay to authorize agents
+      delayAuths: function (schedule) {
+        var bridge = this;
+
+        // stop any existing delay
+        clearTimeout(bridge.authTimer);
+
+        if (schedule) {
+          // auth this and other agents after a delay
+          bridge.authTimer = setTimeout(bridge.authAgents.bind(bridge), 50);
+        }
+      },
+
+      // authorize queued agents with bridge
+      // moves agents from queued to pending status
+      authAgents: function () {
+        var
+          bridge = this,
+          queued = bridge.queued,
+          queuedCopy,
+          // collection of agent authorization requests
+          agentAuthRequests = []
+        ;
+
+        // exit if bridge is not ready or there are no queued agents
+        if (bridge.state != STATE_READY || !queued.length) {
+          return;
+        }
+
+        // stop any potential auth delay
+        bridge.delayAuths();
+
+        // copy queued agents
+        queuedCopy = queued.copy();
+
+        // clear queued agents
+        queued.clear();
+
+        // get agent authorization requests
+        agentAuthRequests = queuedCopy.each(makeAgentReqAuthCfg);
+
+        // if there are any agents to authorize
+        if (agentAuthRequests.length) {
+          // request to authorize these agents
+          bridge.send('auth', agentAuthRequests);
+        }
+      },
+
+      destroy: function () {
+        var
+          bridge = this,
+          iframe = bridge.iframe
+        ;
+
+        // prevent clients from transmitting
+        bridge.state = STATE_CLOSING;
+
+        // cancel destruction timer
+        bridge.delayAbort();
+        // cancel authorization timer
+        bridge.delayAuths();
+
+        // delist this bridge
+        bridges.del(bridge.id);
+
+        // if an iframe was created...
+        if (iframe) {
+
+          // kill load listener for this bridge
+          unbind(iframe, 'load', bridge.onLoad);
+
+          // close any MessageChannel port
+          bridge.unrig();
+        }
+
+        // if this is the last bridge...
+        if (!bridges.length) {
+          // remove the ethaDiv
+          removeEthaDiv();
+        }
+
+        if (iframe && ethaDiv.contains(iframe)) {
+          // remove this bridge's iframe from ethadiv
+          ethaDiv.removeChild(iframe);
+        }
+
+        // drop all queued, pending, and authed agents
+        bridge.agents.each(function (agent) {
+          bridge.drop(agent);
+        });
+      },
+
+      // specifies when bridge iframe is in the page ethadiv and dom
+      inDom: function () {
+        var iframe = this.iframe;
+
+        return ethaDiv.contains(iframe) && docBody.contains(iframe);
+      },
+
+      // (dooms-day) wait before destroying bridge
+      // stops timer when called without params
+      delayAbort: function (ms) {
+        var bridge = this;
+
+        // stop current timebomb
+        clearTimeout(bridge.abortTimer);
+
+        // start new countdown
+        if (ms) {
+          bridge.abortTimer = setTimeout(function () {
+            bridge.destroy(/* TODO: code for abort timer expired */);
+          }, ms);
+        }
+      },
+
+      // send protocol message to bridge
+      send: function (type, data) {
+        var
+          bridge = this,
+          msgId = ++ticker
+        ;
+
+        // only send when ready
+        if (bridge.state != STATE_READY) {
+          return 0;
+        }
+
+        bridge.port.postMessage(
+          // protocol message
+          {
+            // message identifier
+            mid: msgId,
+            // type of message
+            type: type,
+            // message content
+            data: data
+          }
+        );
+
+        // return message id
+        return msgId;
+      }
+
+    });
+
+    // internal state corresponding to client and bridge connection
+    function Agent(idx, client, bridge) {
+      var agent = this;
+
+      agent.idx = idx;
+      agent.client = client;
+      agent.bridge = bridge;
+      agent.peers = client.peers;
+      // preserve channel (given to the bridge, that is)
+      // protects untrusted changes to client channel
+      agent.channel = client.channel;
+    }
+
+    mix(Agent.prototype, {
+
+      state: STATE_INITIAL,
+
+      // change agent (and sync client) state)
+      // return true when state change is not intercepted
+      change: function (newState) {
+        var
+          agent = this,
+          oldState = agent.state,
+          client = agent.client
+        ;
+
+        // exit when not changing the state
+        if (newState == oldState) {
+          return 1;
+        }
+
+        // set state on client
+        client.state = newState;
+        // announce client state change
+        client.fire(CHANGE_EVENT, newState, oldState);
+
+        // fail if the agent state changed after firing this event
+        if (agent.state != newState) {
+          return 0;
+        }
+
+        // fire special events based on transition
+
+        // if closing the agent...
+        if (newState == STATE_CLOSING) {
+          // clear client peers
+          client.peers = {};
+          // if was connected...
+          if (oldState == STATE_READY) {
+            // fire disconnect event
+            client.fire(DISCONNECT_EVENT);
+          }
+        } else if (newState == STATE_READY) {
+
+          // otherwise, if connecting the agent...
+
+          // fire ready event
+          client.fire(CONNECT_EVENT);
+          // if no longer ready...
+          if (agent.state != newState) {
+            // fail state transition
+            return 0;
+          }
+        }
+
+        // note that state transiton succeeded
+        return 1;
+      },
+
+      // add peer instance - triggered via network event
+      addPeer: function (peerData, silent) {
+        var
+          agent = this,
+          client = agent.client,
+          peer = new Peer(peerData, client),
+          peerId = peer.id
+        ;
+
+        // add peer to bridge registry
+        agent.bridge.nids[peerId] = peerData;
+        // add peer instance to agent and client
+        client.peers[peerId] = agent.peers.set(peerId, peer);
+        if (!silent) {
+          // notify client of peer addition
+          client.announcePeer(peer);
+        }
+      },
+
+      // fire the join event per peer
+      announcePeer: function (peer, initial) {
+        var
+          agent = this,
+          client = agent.client
+        ;
+        // fire join event to announce when a peer has been added
+        // the initial flag indicates if the peer was part of the initial peers
+        client.fire(JOIN_EVENT, peer, !!initial);
+      },
+
+      // remove peer instance - triggered via network event
+      removePeer: function (peerId) {
+        var
+          agent = this,
+          client = agent.client,
+          clientPeers = client.peers,
+          // capture dropped peer
+          peer = agent.peers.del(peerId)
+        ;
+
+        // if a peer was dropped and the client recognizes it...
+        if (peer && hasOwnProperty(clientPeers, peerId)) {
+          // set peer state (for completeness)
+          peer.state = STATE_CLOSING;
+          // remove from client peers collection
+          delete clientPeers[peerId];
+          // notify client of disconnected peer
+          client.fire(DROP_EVENT, peer);
+        }
+      },
+
+      // kill this connection
+      kill: function () {
+        var agent = this;
+
+        // tell bridge to remove this agent
+        agent.bridge.drop(agent);
+
+      },
+
+      vetPeers: function (candidates) {
+        var
+          agent = this,
+          peers = agent.peers,
+          clientPeers = agent.client.peers,
+          resolved = [],
+          ln,
+          ref
+        ;
+
+        // exit if client peers is invalid
+        // this would happen if the user abused/removed their "peers" member
+        if (clientPeers && typeof clientPeers != 'object') {
+          return 0;
+        }
+
+        if (!isArray(candidates)) {
+          candidates = [candidates];
+        }
+        ln = candidates.length;
+
+        // loop over peer candidates
+        while (ln--) {
+          ref = candidates[ln];
+          // get peer id
+          if (ref instanceof Peer) {
+            ref = ref.id;
+          }
+          // fail if this id is not a peer of this agent or client
+          if (hasOwnProperty(clientPeers, ref) && peers.has(ref)) {
+            return 0;
+          }
+          // (otherwise) capture this id
+          resolved.push(ref);
+        }
+        // return allowed peer ids
+        return resolved;
+      }
+
+    });
 
     // basic event emitter
     function EventEmitter() {}
@@ -876,20 +1538,20 @@
 
         return me;
       },
-      fire: function (evt) {
+      fire: function (evtName) {
         var
           me = this,
           params,
           cbs,
           cbLn,
-          cbIdx,
-          callbackInvoker;
-
+          cbIdx = -1,
+          callbackInvoker
+        ;
         if (
           isFullString(evt) &&
           hasOwnProperty(me, '_evts') &&
-          hasOwnProperty(me._evts, evt) &&
-          (cbLn = (cbs = me._evts[evt]).length)
+          hasOwnProperty(me._evts, evtName) &&
+          (cbs = me._evts[evtName]).length
         ) {
           params = arraySlice(arguments, 1);
           if (params.length) {
@@ -901,7 +1563,7 @@
               cb.call(me);
             };
           }
-          for (cbIdx = 0; cbIdx < cbLn; cbIdx++) {
+          for (;cb = cbs[++cbIdx];) {
             callbackInvoker(cbs[cbIdx]);
           }
         }
@@ -909,374 +1571,6 @@
         return me;
       }
     });
-
-    function Bridge(network) {
-      var
-        bridge = this,
-        iframe = doc.createElement('iframe');
-
-      bridge.iframe = iframe;
-      bridge.id = network;
-      bridge.clients = {};
-      bridge.channels = {};
-      bridge.channelCnts = {};
-
-      // for the first bridge created
-      if (!bridgeCnt++) {
-        // subscribe to remove the ethadiv when the page unloads
-        bind(scope, 'unload', removeEthaDiv);
-      }
-
-      // bind link as the iframe!onload handler for this instance
-      bridge.onLoad = bridge.link.bind(bridge);
-
-      bind(iframe, 'load', bridge.onLoad);
-
-      if (hasOwnProperty(subetha.urls, network)) {
-        // use aliased network aliased
-        iframe.src = subetha.urls[network];
-      } else {
-        // use raw network
-        iframe.src = network;
-      }
-
-      // give bridge time to connect
-      bridge.dDay(subetha.bridgeTimeout);
-
-      // add bridge to ethadiv
-      ethaDiv.appendChild(iframe);
-
-      // ensure iframe is in the dom
-      if (!bridge.inDom()) {
-        docBody.appendChild(ethaDiv);
-      }
-
-    }
-
-    mix(Bridge.prototype, {
-
-      // bridges start queued, since they are immediately added to the dom
-      state: STATE_QUEUED,
-
-      // number of clients
-      cnt: 0,
-
-      // create and send MessageChannel port to iframe
-      link: function () {
-        var
-          bridge = this,
-          mc;
-
-        // close any existing message channel
-        bridge.unlink();
-
-        // if linking before ready...
-        if (bridge.state < STATE_READY) {
-
-          // create new message channel
-          mc =
-          bridge.mc =
-            new MessageChannel();
-
-          // listen to the incoming port
-          // route "message" events
-          mc.port1.onmessage = bridgePortRouter.bind(bridge);
-
-          // send outgoing port to the iframe
-          bridge.iframe.contentWindow
-            .postMessage(
-              // bootstrap payload
-              {
-                protocol: protocolVersion,
-                network: bridge.id
-              },
-              '*',
-              [mc.port2]
-            );
-
-          // (re)set state to pending, since we're now waiting
-          bridge.state = STATE_PENDING;
-        } else {
-          // otherwise, destroy bridge
-          bridge.destroy();
-        }
-      },
-
-      // close an existing message channel
-      unlink: function () {
-        var
-          bridge = this,
-          mc = bridge.mc;
-
-        if (mc) {
-          // close the channel
-          mc.close();
-
-          // dereference the message channel and port handler
-          mc.port1.onmessage =
-          bridge.mc =
-            0;
-        }
-      },
-
-      // add client to bridge
-      addClient: function (client) {
-        var
-          bridge = this,
-          clients = bridge.clients,
-          clientId = client.id;
-
-        // init new clients
-        if (!hasOwnProperty(clients, clientId)) {
-          // uptick tally
-          bridge.cnt++;
-          // add network to client
-          client._bid = bridge.id;
-          // add to client queue
-          clients[clientId] = client;
-          // clear cids cache
-          bridge._cids = 0;
-        }
-
-        // if bridge is ready now...
-        if (bridge.state == STATE_READY) {
-          // authenticate this client
-          bridge.auth(client);
-        }
-      },
-
-      // remove client from bridge, via client command
-      removeClient: function (client) {
-        var
-          bridge = this,
-          clientId = client.id,
-          channelName = client.channel;
-
-        // if other clients will remain
-        if (--bridge.cnt) {
-          // deference client
-          delete bridge.clients[clientId];
-          // clear cids cache
-          bridge._cids = 0;
-          // when authed
-          if (client.state > STATE_QUEUED) {
-            // remove client from channel
-            delete bridge.channels[channelName][clientId];
-            // when this is the last client in the channel
-            if (bridge.channelCnts[channelName]-- == 1) {
-              delete bridge.channelCnts[channelName];
-            }
-          }
-
-          // discard this one client
-          bridge.drop(client);
-        } else {
-          // simply destroy the entire bridge
-          bridge.destroy();
-        }
-      },
-
-      // authenticate client (with network)
-      auth: function (client) {
-        var creds;
-        // set client to pending
-        setClientState(client, STATE_PENDING);
-        // if still pending, then send client to bridge
-        if (client.state == STATE_PENDING) {
-          creds = client.credentials;
-          if (!isArray(creds)) {
-            creds = [creds];
-          }
-          // authenticate client
-          this.send('auth', {
-            id: client.id,
-            channel: client.channel,
-            creds: creds
-          });
-        }
-      },
-
-      // handle payload, sent via the incoming MessagePort
-      // payload is one or an array of message objects
-
-      /*
-      message structure
-      {                     [message]
-        mid: <int>,
-        type: "...",
-        sent: <date>,
-        data: <mixed>       [data]
-      }
-      */
-      // process a single message
-      process: function (message, received) {
-        var msgType = message.type;
-        if (hasOwnProperty(messageHandlers, msgType)) {
-          // add meta to message
-          message.received = received;
-          messageHandlers[msgType].call(this, message.data, message);
-        } /* else log/fire/throw error? */
-      },
-
-      destroy: function () {
-        var
-          bridge = this,
-          prevBridgeState = bridge.state,
-          iframe = bridge.iframe,
-          clients = bridge.clients,
-          clientId;
-
-        // kill any destruction timer
-        bridge.dDay();
-
-        // destroy any messagechannel instance
-        bridge.unlink();
-
-        // prevent clients from transmitting
-        bridge.state = STATE_CLOSING;
-
-        // dereference and close clients
-        bridge.clients = {};
-        bridge.cnt = 0;
-        for (clientId in clients) {
-          if (hasOwnProperty(clients, clientId)) {
-            bridge.drop(clients[clientId]);
-          }
-        }
-
-        // exit if new clients were created
-        if (bridge.cnt) {
-          // restore bridge state
-          bridge.state = prevBridgeState;
-          // abort destruction
-          return;
-        }
-
-        bridge.deref();
-
-        // kill load listener for this bridge
-        unbind(iframe, 'load', bridge.onLoad);
-
-        // if this will be the last bridge
-        if (!--bridgeCnt) {
-          // stop listening for unload
-          unbind(scope, 'unload', removeEthaDiv);
-          removeEthaDiv();
-        }
-
-        if (ethaDiv.contains(iframe)) {
-          // remove bridge from ethadiv
-          ethaDiv.removeChild(iframe);
-        }
-      },
-
-      deref: function () {
-        // dereference bridge to stop receiving messages
-        delete bridges[this.id];
-      },
-
-      // remove client from bridge
-      drop: function (client) {
-        var
-          peers = client.peers,
-          peerId,
-          clientState = client.state
-        ;
-
-        // for pending and ready clients...
-        if (clientState > STATE_QUEUED && clientState < STATE_CLOSING) {
-
-          // inform network of client departure
-          this.send('drop', client.id);
-
-          // clean up connections
-          if (clientState == STATE_READY) {
-            // tell client it's closing
-            setClientState(client, STATE_CLOSING);
-          }
-        }
-
-        // clear all peer references
-        client.peers = {};
-
-        // inform client of removed peers
-        for (peerId in peers) {
-          if (hasOwnProperty(peers, peerId)) {
-            // inform client this peer has dropped
-            client.fire(DROP_EVENT, peers[peerId]);
-          }
-        }
-
-        // if client is still closing
-        if (client.state == STATE_CLOSING) {
-          // set client state (now)
-          setClientState(client, STATE_INITIAL);
-        }
-      },
-
-      // specifies when bridge iframe is in the page ethadiv and dom
-      inDom: function () {
-        var iframe = this.iframe;
-
-        return ethaDiv.contains(iframe) && docBody.contains(iframe);
-      },
-
-      // (dooms-day) wait before destroying bridge
-      // stops timer when called without params
-      dDay: function (ms) {
-        var bridge = this;
-
-        // stop current timebomb
-        clearTimeout(bridge.timer);
-
-        // start new countdown
-        if (ms) {
-          bridge.timer = setTimeout(function () {
-            bridge.destroy();
-          }, ms);
-        }
-      },
-
-      // send protocol message to bridge
-      send: function (type, data) {
-        var
-          bridge = this,
-          msgId = ++messageCount;
-
-        // only send when ready
-        if (bridge.state != STATE_READY) {
-          return 0;
-        }
-
-        bridge.mc.port1.postMessage(
-          // protocol message
-          {
-            // message identifier
-            mid: msgId,
-            // type of message
-            type: type,
-            // message content
-            data: data
-          }
-        );
-
-        // return message id
-        return request.promise;
-      },
-
-      // return (cached) collection of client ids
-      getCids: function () {
-        var bridge = this;
-
-        if (!bridge._cids) {
-          bridge._cids = objectKeys(bridge.clients);
-        }
-
-        return bridge._cids;
-      }
-
-    });
-
 
     function Client () {
       var me = this;
@@ -1292,7 +1586,8 @@
 
     mix(Client.prototype, {
 
-      id: '',
+      // the id of the client
+      id: 0,
 
       // default channel
       channel: 'lobby',
@@ -1306,76 +1601,110 @@
       // add client to bridge queue
       open: function (network) {
         var
-          me = this,
-          channel = me.channel,
-          url = me.url,
+          client = this,
           args = arguments,
-          state = me.state,
-          pos;
+          // retrieve existing agent (if any)
+          agent = getAgent(client),
+          bridge,
+          channel,
+          url,
+          pos
+        ;
 
         // process the given channel...
         if (isFullString(network)) {
           pos = network.indexOf('@');
+          // if the network address appears to have two parts...
           if (~pos) {
-            channel = network.substring(0, pos) || channel;
-            url = network.substring(pos + 1) || url;
+            // get channel portion
+            channel = network.substring(0, pos);
+            // use remainder as the (bridge) url
+            url = network.substring(pos + 1);
+
+            // capture resolved channel
+            client.channel = channel;
+
+            // if the given url is truthy
+            if (url) {
+              // prepend protocol safe prefix, if it looks like a full url
+              if (r_domainish.test(url)) {
+                url = urlPrefix + url;
+              }
+              // capture resolve bridge url
+              client.url = url;
+            }
+
           } else {
-            channel = network;
+            // (otherwise) treat network address as the channel only
+            client.channel = network;
           }
 
-          // update access credentials if given
-          if (args.length > 1) {
-            me.credentials = arraySlice(args, 1);
-          }
+          // set access credentials when given new/existing network
+          client.credentials = args.length ? arraySlice(args, 1) : [];
+
         }
 
-        // if url looks like a domain, add protocol safe prefix
-        if (r_domainish.test(url)) {
-          url = urlPrefix + url;
-        }
+        // if there is agent already (i.e., the client is already active)...
+        if (agent) {
 
-        // when already open-ed/ing
-        if (state > STATE_PENDING) {
-          // exit if same channel and url
-          if (channel == me.channel && url == me.url) {
-            return;
-          }
           // close existing connection
-          me.close();
-          // capture new (closed) state
-          state = me.state;
+          agent.kill();
+
+          // if there is yet another agent...
+          if (getAgent(client)) {
+            // exit, since this means an event handler opened this client first
+            // during "disconnect" or "readyStateChange" events
+            return client;
+          }
+
         }
 
-        // set resolved network
-        me.channel = channel;
-        me.url = url;
+        // alias bridge url
+        url = client.url;
 
-        // open if at initial state
-        if (state < STATE_PENDING) {
+        // resolve bridge with this url
 
-          // set id now
-          me.id = guid();
-          // update state to queued
-          setClientState(me, STATE_QUEUED);
-          // if state hasn't changed since queuing (i.e., they haven't closed the client)
-          if (me.state == STATE_QUEUED) {
-            // add to global/bridge queue
-            addClient(me);
+        if (bridges.has(url)) {
+          // get existing bridge
+          bridge = bridges.get(url);
+        } else {
+          // create new bridge
+          bridge = bridges.set(url, new Bridge(url));
+
+          // open bridge if dom is ready
+          if (domReady) {
+            bridge.open();
           }
         }
 
-        return me;
+        // activate this client and create bridge
+
+        // capture index of client added to the active client list
+        agentIdx = activeClients.push(client) - 1;
+        // capture for simpler lookup
+        client._idx = agentIdx;
+        // reset peers
+        client.peers = {};
+
+        // create agent to link the bridge and client
+        agent = new Agent(agentIdx, client, bridge);
+
+        // add agent to this bridge
+        bridge.join(agent);
+
+        // stay monadic
+        return client;
       },
 
-      // remove from global/bridge queue
+      // close or abort connection
       close: function () {
         var
           client = this,
-          state = client.state;
+          agent = getAgent(client)
+        ;
 
-        if (state > STATE_INITIAL && state < STATE_CLOSING) {
-          // remove from global queue or bridge
-          removeClient(client);
+        if (agent) {
+          agent.kill();
         }
 
         return client;
@@ -1385,42 +1714,65 @@
       _transmit: function (type, peers, data) {
         var
           client = this,
-          bridge = getBridgeFromClient(client),
-          request = new ClientRequest(client)
+          agent = getAgent(client),
+          request = new Request(agent),
+          bridge
         ;
 
+        if (agent) {
+          bridge = agent.bridge;
+        }
+
+        // only use bridge when...
         if (
+
+          // bridge and client/agent are connected
           bridge &&
           bridge.state == STATE_READY &&
-          client.state == STATE_READY &&
+          agent.state == STATE_READY &&
+
+          // type is valid
           isFullString(type) &&
-          !hasOwnProperty(prohibitedEvents, type) &&
+          // type has a handler
+          hasOwnProperty(clientEventHandlers, type)
+
+          // recipients are...
           (
+            // everyone, or...
             !peers ||
-            (peers = resolvePeers(client.peers, peers))
+            // targets are valid...
+            (peers = agent.vetPeers(peers))
           )
+
         ) {
-          if (bridge.send(
-            'client',
-            {
-              type: type,
-              rid: request.id,
-              from: client.id,
-              to: peers || 0,
-              data: data
-            })
+
+          // if bridge successfully sends this message...
+          if (
+            bridge.send(
+              'client',
+              {
+                type: type,
+                rid: request.id,
+                from: agent.id,
+                to: peers || 0,
+                data: data
+              }
+            )
           ) {
-            // activate request for later resolution
-            request.add();
+            // activate request for resolution later
+            request.log();
           } else {
             // reject request since send failed
             request.no('failed');
           }
+
         } else {
           // reject promise now
-          request.no('invalid message or state');
+          // TODO: provide more exit points and error messages
+          request.no('invalid message, state, or peers');
         }
 
+        // return promise
         return request.promise;
       }
 
@@ -1430,11 +1782,12 @@
     function Peer(peerData, client) {
       var me = this;
 
+      // link to client
       me._client = client;
       if (peerData) {
         me.id = peerData.id;
         me.origin = peerData.origin;
-        me.start = new Date(peerData.start);
+        me.start = peerData.start;
         me.channel = peerData.channel;
       }
     }
@@ -1442,7 +1795,23 @@
     mix(Peer.prototype, {
 
       // indicates peer is usable
-      state: STATE_READY
+      state: STATE_READY//,
+
+      // manage block list
+      // block: function () {
+      //   var
+      //     peer = this,
+      //     agent;
+
+      //   // exit if peer is dead or non-active
+      //   if (
+      //     peer.state != STATE_READY ||
+      //     !(agent = getAgent(peer._client))
+      //   ) {
+      //     return;
+      //   }
+      //   agent.blocked[peer.id]
+      // }
 
     });
 
@@ -1478,5 +1847,5 @@
 }(
   typeof define === 'function',
   typeof exports != 'undefined',
-  Array, Date, Math, JSON, Object, RegExp, this
+  Array, Date, Object, this
 );
