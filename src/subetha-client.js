@@ -1713,7 +1713,7 @@
       },
 
       // send arbitrary client message
-      _transmit: function (type, peers, data) {
+      _transmit: function (type, data, peers) {
         var
           client = this,
           agent = getAgent(client),
