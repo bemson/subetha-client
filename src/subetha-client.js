@@ -156,7 +156,7 @@
         }
 
         */
-        auth: function  (message) {
+        auth: function  (message, paylaod) {
           var
             bridge = this,
             pending = bridge.pending,
@@ -196,6 +196,8 @@
             message.id;
           // add this agent to the network registry
           nids[clientId] = agent;
+          // capture join date
+          agent.joined = payload.sent;
 
           // remove agent from pending stack
           bridge.pending.del(agentIdx);
@@ -1360,8 +1362,8 @@
           client.peers = {};
           // if was connected...
           if (oldState == STATE_READY) {
-            // fire disconnect event
-            client.fire(DISCONNECT_EVENT);
+            // fire disconnect event, pass the previous server and connection time
+            client.fire(DISCONNECT_EVENT, agent.channel + '@' + agent.bridge.id, agent.sent);
           }
         } else if (newState == STATE_READY) {
 
