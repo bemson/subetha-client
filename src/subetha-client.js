@@ -975,9 +975,9 @@
         // define bound global router for this bridge, for use in link()
         bridge.onMessage = bridgePortRouter.bind(bridge);
 
-        if (hasOwnProperty(subetha.urls, network)) {
+        if (hasOwnProperty(serverList, network)) {
           // use aliased network aliased
-          iframe.src = subetha.urls[network];
+          iframe.src = serverList[network];
         } else {
           // use raw network
           iframe.src = network;
@@ -1592,8 +1592,8 @@
       // default channel
       channel: 'lobby',
 
-      // default url
-      url: 'local',
+      // default server-url
+      server: 'local',
 
       // connection state
       state: STATE_INITIAL,
@@ -1631,7 +1631,7 @@
                 url = urlPrefix + url;
               }
               // capture resolve bridge url
-              client.url = url;
+              client.server = url;
             }
 
           } else {
@@ -1660,7 +1660,7 @@
         }
 
         // alias bridge url
-        url = client.url;
+        url = client.server;
 
         // resolve bridge with this url
 
