@@ -160,6 +160,7 @@
           var
             bridge = this,
             pending = bridge.pending,
+            agents = bridge.agents,
             agentIdx = message.idx,
             agent = pending.get(agentIdx),
             channels = bridge.channels,
@@ -952,6 +953,7 @@
       open: function () {
         var
           bridge = this,
+          network = bridge.id,
           iframe,
           timeout = subetha.bridgeTimeout
         ;
@@ -1601,6 +1603,9 @@
       // the id of the client
       id: 0,
 
+      // the index of the active agent
+      _idx: 0,
+
       // default channel
       channel: 'lobby',
 
@@ -1745,7 +1750,7 @@
 
           // type is valid
           isFullString(type) &&
-          // type has a handler
+          // this type has an entry - function or not doesn't matter
           hasOwnProperty(clientEventHandlers, type)
 
           // recipients are...
