@@ -530,7 +530,7 @@
           }
         }
         */
-        msgType: clientEventHandlers
+        types: clientEventHandlers
 
       }
     ;
