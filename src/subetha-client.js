@@ -890,7 +890,7 @@
         request.done();
 
         // reject promise with status
-        request.reject(status);
+        request.reject(new Error(status));
       },
 
       // place request up for responses
