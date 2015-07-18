@@ -31,16 +31,21 @@
       createElement = doc.createElement.bind(doc),
       docBody,
       domReady = 0,
+
       STATE_INITIAL = 0,
       STATE_QUEUED = 1,
       STATE_PENDING = 2,
       STATE_READY = 3,
       STATE_CLOSING = 4,
+
+      ERROR_EVENT = '::error',
       JOIN_EVENT = '::join',
       DROP_EVENT = '::drop',
       CONNECT_EVENT = '::connect',
+      AUTH_FAIL_EVENT = '::auth-fail',
       DISCONNECT_EVENT = '::disconnect',
       CHANGE_EVENT = '::readyStateChange',
+
       unsupported = typeof MessageChannel != 'function',
       // tests whether a string looks like a domain
       /*
@@ -179,9 +184,19 @@
             // denied authorication
             !message.ok
           ) {
-            // if there is a corresponding agent...
-            if (bridge.agents.has(agentIdx)) {
-              // drop from bridge
+            // if the response applies to some agent from this bridge...
+            if (agent || agents.has(agentIdx)) {
+              // if a known agent was pending
+              if (agent) {
+                // note that this agent failed authorization
+                agent.code = AUTH_FAIL_EVENT;
+              } else {
+                // target the relevant agent
+                agent = agents.get(agentIdx);
+                // set error code
+                agent.code = ERROR_EVENT;
+              }
+              // drop conflicted agent from bridge
               bridge.drop(agent);
             }
             // ignore message
@@ -503,6 +518,7 @@
         Peer: Peer,
 
         EventEmitter: EventEmitter,
+        version: '0.0.2',
 
         protocol: protocolVersion,
 
@@ -1347,13 +1363,21 @@
       change: function (newState) {
         var
           agent = this,
+          bridge = agent.bridge,
           oldState = agent.state,
-          client = agent.client
+          client = agent.client,
+          reverting
         ;
 
         // exit when not changing the state
         if (newState == oldState) {
           return 1;
+        }
+
+        reverting = newState == STATE_INITIAL || newState == STATE_CLOSING;
+
+        if (reverting) {
+          client._idx = 0;
         }
 
         // set state on client
@@ -1368,26 +1392,46 @@
 
         // fire special events based on transition
 
-        // if closing the agent...
-        if (newState == STATE_CLOSING) {
-          // clear client peers
+        // dereference peers
+        if (reverting) {
           client.peers = {};
+        }
+
+        // if code is given by agent...
+        if (agent.code) {
+
+          // fire given code
+          client.fire(agent.code);
+
+        } else if (reverting) {
+
+          // or, when closing the agent...
+
           // if was connected...
           if (oldState == STATE_READY) {
+
             // fire disconnect event, pass the previous server and connection time
-            client.fire(DISCONNECT_EVENT, agent.channel + '@' + agent.bridge.id, agent.sent);
+            client.fire(DISCONNECT_EVENT, agent.channel + '@' + agent.bridge.id, agent.join);
+
+          } else if (bridge.state < STATE_READY) {
+
+            // or, when the bridge never connected
+            client.fire(ERROR_EVENT);
           }
+
         } else if (newState == STATE_READY) {
 
           // otherwise, if connecting the agent...
 
           // fire ready event
-          client.fire(CONNECT_EVENT);
+          client.fire(CONNECT_EVENT, client.peers);
+
           // if no longer ready...
           if (agent.state != newState) {
             // fail state transition
             return 0;
           }
+
         }
 
         // note that state transiton succeeded
