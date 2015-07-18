@@ -1435,7 +1435,7 @@
         // if a peer was dropped and the client recognizes it...
         if (peer && hasOwnProperty(clientPeers, peerId)) {
           // set peer state (for completeness)
-          peer.state = STATE_CLOSING;
+          peer.state = STATE_INITIAL;
           // remove from client peers collection
           delete clientPeers[peerId];
           // notify client of disconnected peer
