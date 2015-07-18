@@ -1030,27 +1030,32 @@
         // (re)set state to pending
         bridge.state = STATE_PENDING;
 
-        // create new message channel
-        mc = new MessageChannel();
+        try {
+          // create new message channel
+          mc = new MessageChannel();
 
-        // track message channel port
-        bridge.port = mc.port1;
+          // track message channel port
+          bridge.port = mc.port1;
 
-        // listen to the incoming port
-        // route "message" events with pre-bound bridge method
-        mc.port1.onmessage = bridge.onMessage;
+          // listen to the incoming port
+          // route "message" events with pre-bound bridge method
+          mc.port1.onmessage = bridge.onMessage;
 
-        // send outgoing port to the iframe
-        bridge.iframe.contentWindow.postMessage(
-          // bootstrap payload
-          {
-            protocol: protocolVersion,
-            network: bridge.id
-          },
-          '*',
-          // transfer port
-          [mc.port2]
-        );
+          // send outgoing port to the iframe
+          bridge.iframe.contentWindow.postMessage(
+            // bootstrap payload
+            {
+              protocol: protocolVersion,
+              network: bridge.id
+            },
+            '*',
+            // transfer port
+            [mc.port2]
+          );
+        } catch (e) {
+          // error, log?
+          bridge.destroy();
+        }
       },
 
       // close any existing message channel
@@ -1295,17 +1300,22 @@
           return 0;
         }
 
-        bridge.port.postMessage(
-          // protocol message
-          {
-            // message identifier
-            mid: msgId,
-            // type of message
-            type: type,
-            // message content
-            data: data
-          }
-        );
+        try {
+          bridge.port.postMessage(
+            // protocol message
+            {
+              // message identifier
+              mid: msgId,
+              // type of message
+              type: type,
+              // message content
+              data: data
+            }
+          );
+        } catch (e) {
+          // log error?
+          return 0;
+        }
 
         // return message id
         return msgId;
