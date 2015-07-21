@@ -628,8 +628,8 @@ SubEtha-Client uses the following ECMAScript 5 & 6, and HTML 5 features:
 Use a `<SCRIPT>` tag to load the _subetha-client.min.js_ file in your web page. Doing so, adds `Subetha` to the global scope.
 
 ```html
-  <script type="text/javascript" src="path/to/subetha-client.min.js"></script>
-  <script type="text/javascript">
+  <script src="path/to/subetha-client.min.js"></script>
+  <script>
     // ... SubEtha dependent code ...
   </script>
 ```
