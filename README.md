@@ -357,7 +357,7 @@ The Promise is rejected under any of these conditions:
 
 Valid values for the _peers_ parameter are the peer identifier (string or number), and Peer instances. Only peers of the client may be targeted.
 
-**Note:** This method is [protected-by-convention](https://developer.mozilla.org/en-US/Add-ons/SDK/Guides/Contributor_s_Guide/Private_Properties#Using_Prefixes), and is intended for use by library authors, only.
+**Note:** This method is [private-by-convention](https://developer.mozilla.org/en-US/Add-ons/SDK/Guides/Contributor_s_Guide/Private_Properties#Using_Prefixes), and is intended for use by library authors, only.
 
 #### Client@channel
 
@@ -638,9 +638,9 @@ Use a `<SCRIPT>` tag to load the _subetha-client.min.js_ file in your web page. 
 
 ### Package managers
 
-  * `npm install subetha-client`
-  * `component install bemson/subetha-client`
-  * `bower install subetha-client`
+  * [npm](https://www.npmjs.com/package/subetha-client): `npm install subetha-client`
+  * [component](http://component.github.io/): `component install bemson/subetha-client`
+  * [bower](http://bower.io/search/?q=subetha-client): `bower install subetha-client`
 
 ### AMD
 
