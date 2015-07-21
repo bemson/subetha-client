@@ -161,7 +161,7 @@
         }
 
         */
-        auth: function  (message, paylaod) {
+        auth: function  (message, payload) {
           var
             bridge = this,
             pending = bridge.pending,
@@ -1602,7 +1602,6 @@
           me = this,
           params,
           cbs,
-          cbLn,
           cbIdx = -1,
           callbackInvoker
         ;
