@@ -517,7 +517,8 @@
 
         Peer: Peer,
 
-        EventEmitter: EventEmitter,
+        Events: EventEmitter,
+
         version: '0.0.2',
 
         protocol: protocolVersion,
