@@ -1,7 +1,7 @@
 {
   "name": "subetha-client",
   "repository": "bemson/subetha-client",
-  "description": "Define, send and receive SubEtha message types",
+  "description": "Define, send and receive SubEtha messages",
   "version": "0.0.3-alpha",
   "keywords": [
     "network",
@@ -11,9 +11,6 @@
     "events",
     "pubsub"
   ],
-  "dependencies": {
-    "bemson/morus": "1.x"
-  },
   "development": {},
   "license": "Apache-2.0",
   "main": "src/subetha-client.js",

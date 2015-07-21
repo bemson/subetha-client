@@ -5,11 +5,8 @@
   "authors": [
     "Bemi Faison <bemson@gmail.com>  (http://learnings-bemson.blogspot.com)"
   ],
-  "description": "Define, send and receive SubEtha message types",
+  "description": "Define, send and receive SubEtha messages",
   "main": "src/subetha-client.js",
-  "dependencies": {
-    "morus": "1.x"
-  },
   "keywords": [
     "network",
     "client",

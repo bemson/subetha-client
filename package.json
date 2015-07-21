@@ -1,11 +1,8 @@
 {
   "name": "subetha-client",
   "version": "0.0.3-alpha",
-  "description": "Define, send and receive SubEtha message types",
+  "description": "Define, send and receive SubEtha messages",
   "main": "src/subetha-client.js",
-  "dependencies": {
-    "morus": "1.x"
-  },
   "keywords": [
     "network",
     "client",
