@@ -7,7 +7,7 @@
  */
 /* global define */
 /* jshint scripturl:true */
-!function (inAMD, inCJS, Array, Date, Object, scope, undefined) {
+!function (inAMD, inCJS, Array, Date, Object, location, scope, undefined) {
 
   function initSubEtha() {
 
@@ -1908,5 +1908,5 @@
 }(
   typeof define === 'function',
   typeof exports != 'undefined',
-  Array, Date, Object, this
+  Array, Date, Object, document.location, this
 );
