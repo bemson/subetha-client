@@ -1,0 +1,28 @@
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Subetha-Client Test Suite</title>
+  <link rel="stylesheet" href="../node_modules/mocha/mocha.css" />
+</head>
+<body>
+  <h1>Subetha-Client Test Suite</h1>
+  <p>Testing version 0.0.3-alpha, by <a href="mailto:bemson@gmail.com">Bemi Faison</a>. Source files on <a href="https://github.com/bemson/subetha-client">github.com</a></p>
+  <hr />
+  <div id="mocha"></div>
+  <script src="../node_modules/mocha/mocha.js"></script>
+  <script src="../node_modules/chai/chai.js"></script>
+  <script src="../node_modules/sinon-chai/lib/sinon-chai.js"></script>
+  <script src="../node_modules/sinon/lib/sinon.js"></script>
+  <script src="../node_modules/sinon/lib/sinon/spy.js"></script>
+  <script>
+    mocha.setup('bdd');
+    chai.should();
+    expect = chai.expect;
+  </script>
+  <script src="../src/subetha-client.js"></script>
+  <script src="client.js"></script>
+  <script>
+    mocha.run();
+  </script>
+</body>
+</html>

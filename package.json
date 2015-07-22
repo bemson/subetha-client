@@ -3,6 +3,9 @@
   "version": "0.0.3-alpha",
   "description": "Define, send and receive SubEtha messages",
   "main": "src/subetha-client.js",
+  "scripts": {
+    "test": "node_modules/.bin/mocha"
+  },
   "keywords": [
     "network",
     "client",
@@ -11,6 +14,12 @@
     "events",
     "pubsub"
   ],
+  "devDependencies": {
+    "mocha": "~1.7",
+    "sinon": "~1.5",
+    "chai": "~1.4",
+    "sinon-chai": "~2.3"
+  },
   "author": {
     "name": "Bemi Faison",
     "email": "bemson@gmail.com",
