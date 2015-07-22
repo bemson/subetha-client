@@ -14,6 +14,7 @@
     var
       // object to return when a value should not be captured
       hashIgnoreFlag = {},
+      activeClients = [],
       clientEventHandlers = {},
       defaultBridgeTimeout = 10000,
       noPromises = typeof Promise != 'function',
